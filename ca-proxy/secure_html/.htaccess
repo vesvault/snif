@@ -1,0 +1,10 @@
+DirectoryIndex snif-auth.php
+
+RewriteEngine On
+
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteRule /*(.*) snif-auth.php/$1
+
+Header set Access-Control-Allow-Origin "*"
+Header set Access-Control-Allow-Methods "GET,POST"
+Header set Access-Control-Allow-Headers "Content-Type, Authorization,X-VES-Authorization"

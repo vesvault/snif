@@ -1,0 +1,10 @@
+[Unit]
+Description=SNIF APNS Sender for connectors running on iOS devices
+
+[Service]
+User=snif
+Group=snif
+ExecStart=/home/snif/bin/snif-apnsd
+
+[Install]
+WantedBy=multi-user.target

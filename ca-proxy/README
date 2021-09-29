@@ -1,0 +1,50 @@
+/**************************************************************************
+ *     _________
+ *    /````````_\                  S N I F ~ e2e TLS trust for IoT
+ *   /\     , / O\      ___
+ *  | |     | \__|_____/  o\       e2e TLS SNI Forwarder
+ *  | |     |  ``/`````\___/       e2e TLS CA Proxy
+ *  | |     | . | <"""""""~~
+ *  |  \___/ ``  \________/        https://snif.host
+ *   \  '''  ``` /````````         (C) 2021 VESvault Corp
+ *    \_________/                  Jim Zubov <jz@vesvault.com>
+ *
+ *
+ * GNU General Public License v3
+ * You may opt to use, copy, modify, merge, publish, distribute and/or sell
+ * copies of the Software, and permit persons to whom the Software is
+ * furnished to do so, under the terms of the COPYING file.
+ *
+ * This software is distributed on an "AS IS" basis, WITHOUT WARRANTY OF ANY
+ * KIND, either express or implied.
+ *
+ **************************************************************************/
+
+
+Suggested location for the CA proxy files: /home/snif
+Suggested user and group name for processes and files: snif
+public_html/ is the HTTP root for catch-all SNIF domains
+secure_html/ is the HTTPS root for the dedicated initialization domain,
+    such as https://snif.example.com, a custom port such as 4443 is suggested.
+    The initialization URL is to be used by SNIF connector on the devices
+    to acquire a hostname and a certificate, snifd -a argument.
+Crypt::LE is required by bin/snif-certd for LEt's Encrypt ACME,
+    use cpan install
+Net::DNS is required if using wildcard certs, use cpan install
+etc/{SNIF_initialization_domain}.domains contains the list of {domain} names
+    to issue SNIF hosts as subdomains that are expected to point to CNAME
+    snif-pool.{domain}, and served by HTTP public.html/
+bin/snif-apnsd is an optional process that sends APNS notifications to wake up
+    a sleeping iOS device to serve an incoming connection, as long as the
+    device has registered with APNS and has communicated the hex APNS ID to
+    SNIF relay over the control connection by sending
+    "SNIF MSG hostname.snif-1234-5678.example.com apns=0123ABCD..."
+
+
+CONTENTS:
+
+bin/         Certificate management scripts
+etc/         Configuration files
+public_html/ Insecure web root for SNIF domains, http://snif-1234-5678.example.com
+secure_html/ Secure web root for SNIF initializer, https://snif.example.com:4443
+mkdirs       Create directories and pipes for SNIF daemons and scripts

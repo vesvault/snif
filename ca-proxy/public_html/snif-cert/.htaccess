@@ -1,0 +1,5 @@
+DirectoryIndex Off
+RewriteEngine On
+
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteRule ^(.*)$ /snif-cert.php/$1 [L]

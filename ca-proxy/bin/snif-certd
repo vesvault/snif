@@ -1,0 +1,166 @@
+#!/usr/bin/perl
+
+#/**************************************************************************
+# *     _________
+# *    /````````_\                  S N I F ~ e2e TLS trust for IoT
+# *   /\     , / O\      ___
+# *  | |     | \__|_____/  o\       e2e TLS SNI Forwarder
+# *  | |     |  ``/`````\___/       e2e TLS CA Proxy
+# *  | |     | . | <"""""""~~
+# *  |  \___/ ``  \________/        https://snif.host
+# *   \  '''  ``` /````````         (C) 2021 VESvault Corp
+# *    \_________/                  Jim Zubov <jz@vesvault.com>
+# *
+# *
+# * GNU General Public License v3
+# * You may opt to use, copy, modify, merge, publish, distribute and/or sell
+# * copies of the Software, and permit persons to whom the Software is
+# * furnished to do so, under the terms of the COPYING file.
+# *
+# * This software is distributed on an "AS IS" basis, WITHOUT WARRANTY OF ANY
+# * KIND, either express or implied.
+# *
+# **************************************************************************/
+
+use Crypt::LE;
+
+# The following line can be disabled if only single domain certificates with
+# HTTP verification are being issued
+use Net::DNS;
+
+$BaseDir = "/home/snif";
+
+$WWWdir = "$BaseDir/public_html";
+$CSRdir = "$BaseDir/csr";
+$CertDir = "$BaseDir/crt";
+$EtcDir = "$BaseDir/etc";
+$LogDir = "$BaseDir/log";
+$CtlFifo = "$BaseDir/var/snif-certd.ctl";
+$Live = 1;
+
+sub dlog {
+    my ($log, $msg) = @_;
+    my @t = localtime;
+    printf $log "%02d/%02d/%02d %02d:%02d:%02d [%d]: %s\n", $t[4] + 1, $t[3], $t[5] % 100, $t[2], $t[1], $t[0], $$, $msg;
+}
+
+sub flog {
+    my ($log, $f, $tag, $er) = @_;
+    dlog($log, $tag . ': ' . ($f? 'OK' : 'ERROR') . ($er ? ' ' . $er : ''));
+}
+
+sub lelog {
+    my ($log, $le, $rs, $tag) = @_;
+    my $ok = ($rs == Crypt::LE::OK);
+    flog($log, $ok, $tag, ($ok ? '' : $le->error_details()));
+    close $log if !$ok;
+    return $ok;
+}
+
+sub getcert {
+    my ($domain) = @_;
+    return -1 if (-e("$CertDir/$domain.crt") && (stat("$CertDir/$domain.crt"))[9] > time - 86400);
+    return -2 if (-e("$LogDir/$domain.log") && (stat("$LogDir/$domain.log"))[9] > time - 3600);
+    open LOG, ">>$LogDir/$domain.log";
+    my $base = base_domain($domain);
+    $mode = $base && -f("$EtcDir/$base.tsig") ? 'dns' : 'http';
+    my $le = new Crypt::LE(live => $Live);
+    dlog(LOG, "issue $domain (live=$Live mode=$mode) ...");
+    lelog(LOG, $le, $le->load_account_key("$EtcDir/account.key"), "load_account_key") || return;
+    lelog(LOG, $le, $le->load_csr("$CSRdir/$domain.csr", ($mode eq 'http' ? "" : "*.") . $domain), "load_csr") || return;
+    lelog(LOG, $le, $le->register(), "register") || return;
+    lelog(LOG, $le, $le->accept_tos(), "accept_tos") || return;
+    lelog(LOG, $le, $le->request_challenge(), "request_challenge") || return;
+    lelog(LOG, $le, $le->accept_challenge(\&process_challenge, {mode => $mode}, $mode), "accept_challenge") || return;
+    lelog(LOG, $le, $le->verify_challenge(\&log_challenge, {logfd => LOG}, $mode), "verify_challenge") || return;
+    lelog(LOG, $le, $le->request_certificate(), "request_certificate") || return;
+    lelog(LOG, $le, $le->request_issuer_certificate(), "request_issuer_certificate") || return;
+    my $cert = $le->certificate();
+    my $chain = $le->issuer();
+    if ($cert) {
+	open CRT, ">$CertDir/$domain.crt+";
+	print CRT $cert;
+	print CRT "\n";
+	print CRT $chain;
+	if (close CRT) {
+	    unlink "$CertDir/$domain.crt";
+	    rename("$CertDir/$domain.crt+", "$CertDir/$domain.crt") || flog(LOG, 0, "rename");
+	} else {
+	    flog(LOG, 0, "write");
+	}
+    } else {
+	flog(LOG, 0, "certificate");
+    }
+    close(LOG) || return -3;
+    return 0;
+}
+
+sub base_domain {
+    my ($d) = @_;
+    $d =~s/.*?\.//;
+    return $d;
+}
+
+sub process_challenge {
+    my ($challenge, $p) = @_;
+    my $mode = $p->{mode};
+    if ($mode eq 'http') {
+	return process_challenge_http($challenge);
+    } elsif ($mode eq 'dns') {
+	return process_challenge_dns($challenge);
+    }
+    return 0;
+}
+
+sub process_challenge_http {
+    my $challenge = shift;
+    open(CH, ">$WWWdir/.well-known/acme-challenge/$challenge->{token}") || return 0;
+    print CH "$challenge->{token}.$challenge->{fingerprint}";
+    return close CH;
+};
+
+sub process_challenge_dns {
+    my $challenge = shift;
+    my $domain = base_domain($challenge->{host});
+    my $r = new Net::DNS::Resolver();
+    $r->nameservers("ns.$domain");
+    my $u = new Net::DNS::Update($domain, 'IN');
+    $u->push(update => rr_del("snif-pool.$domain. TXT"));
+    $u->push(update => rr_add("snif-pool.$domain. 0 TXT $challenge->{record}"));
+    $u->sign_tsig("$EtcDir/$domain.tsig");
+    my $rs = $r->send($u);
+    return 0 if !$rs;
+    my $h = $rs->header;
+    return ($h && ($h->rcode eq 'NOERROR'));
+};
+
+sub log_challenge {
+    my ($ch, $p) = @_;
+    if ($ch->{error}) {
+	dlog($p->{logfd}, "verify: $ch->{error}");
+    }
+    return 1;
+}
+
+close STDERR;
+open STDERR, ">>$LogDir/log_snif-certd";
+select STDERR;
+$| = 1;
+dlog(STDERR, "starting snif-certd");
+
+
+while (1) {
+    if (!open(CTL, $CtlFifo)) {
+	sleep(2);
+	next;
+    }
+    while (<CTL>) {
+	chomp;
+	dlog(STDERR, "<< $_");
+	if (/SNIF CERT (\S+)/) {
+	    my $r = getcert $1;
+	    dlog(STDERR, "getcert: $r") if ($r);
+	}
+    }
+    close CTL;
+}
