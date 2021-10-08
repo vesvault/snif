@@ -1,4 +1,4 @@
-/**************************************************************************
+<pre>/**************************************************************************
  *     _________
  *    /````````_\                  S N I F ~ e2e TLS trust for IoT
  *   /\     , / O\      ___
@@ -19,7 +19,7 @@
  * KIND, either express or implied.
  *
  **************************************************************************/
-
+   </pre>
 
 - Try to follow the naming conventions and the directory structure of the project
 - Do not include non-standard libraries unless there's a good reason for it
