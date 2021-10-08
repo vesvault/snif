@@ -186,6 +186,15 @@ snifd -d -c snif.crt -k snif.key -a https://snif.example.com:4443/ 443:^80 1443:
 
 
 
+BEWARE OF ROOT CERT EXPIRATION!
+
+DST Root X3 has expired on 09/30/21.
+On a Linux/Unix platform - try
+curl https://letsencrypt.org
+If getting a certificate error - take care of your CA trust root first.
+
+
+
 CONTENTS:
 
 lib/        SNIF Connector libraries source code
