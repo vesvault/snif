@@ -37,6 +37,7 @@ $EtcDir = "$BaseDir/etc";
 $LogDir = "$BaseDir/log";
 $CtlFifo = "$BaseDir/var/snif-certd.ctl";
 $Live = 1;
+$UserAgent = "snif-certd/0.9 (https://snif.host)";
 
 sub dlog {
     my ($log, $msg) = @_;
@@ -64,7 +65,7 @@ sub getcert {
     open LOG, ">>$LogDir/$domain.log";
     my $base = base_domain($domain);
     $mode = $base && -f("$EtcDir/$base.tsig") ? 'dns' : 'http';
-    my $le = new Crypt::LE(live => $Live);
+    my $le = new Crypt::LE(live => $Live, ua => $UserAgent);
     dlog(LOG, "issue $domain (live=$Live mode=$mode) ...");
     lelog(LOG, $le, $le->load_account_key("$EtcDir/account.key"), "load_account_key") || return;
     lelog(LOG, $le, $le->load_csr("$CSRdir/$domain.csr", ($mode eq 'http' ? "" : "*.") . $domain), "load_csr") || return;
