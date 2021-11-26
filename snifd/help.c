@@ -38,7 +38,7 @@
 const char *snif_banner =
 
 "    \x1b[1m_________\x1b[0m\n"
-"   \x1b[1m/\x1b[0m\x1b[1;30m````````\x1b[0m\x1b[1m_\\\x1b[0m                   \x1b[1;36mS N I F\x1b[0m \x1b[1;31m~\x1b[0m Trusted e2e TLS for IoT\n"
+"   \x1b[1m/\x1b[0m\x1b[1;30m````````\x1b[0m\x1b[1m_\\\x1b[0m                   \x1b[1;36mS N I F\x1b[0m \x1b[1;31m~\x1b[0m e2e TLS trust for IoT\n"
 "  \x1b[1m/\x1b[0m\x1b[2;33m\\     ,\x1b[0m \x1b[1m/\x1b[0m \x1b[1;34mO\x1b[0m\x1b[1;30m\\\x1b[0m      \x1b[1;30m___\x1b[0m         e2e TLS SNI Forwarder\n"
 " \x1b[1m|\x1b[0m \x1b[2;33m|     |\x1b[0m \x1b[1m\\__\x1b[0m\x1b[1;30m|\x1b[0m\x1b[1m_____\x1b[0m\x1b[1;30m/  o\\\x1b[0m        e2e TLS CA Proxy\n"
 " \x1b[1m|\x1b[0m \x1b[2;33m|     |\x1b[0m  \x1b[1;30m``/`````\\___/\x1b[0m\n"
