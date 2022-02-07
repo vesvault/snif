@@ -1,3 +1,4 @@
+```
 /**************************************************************************
  *     _________
  *    /````````_\                  S N I F ~ e2e TLS trust for IoT
@@ -19,7 +20,7 @@
  * KIND, either express or implied.
  *
  **************************************************************************/
-
+```
 
 
 SUMMARY:
@@ -37,7 +38,7 @@ encryption.
 
 
 
-HOW IT WORKS:
+# HOW IT WORKS:
 
 The private key is generated locally by the SNIF connector and never leaves
 the device.
@@ -72,8 +73,8 @@ that is not listed on the public records.
 
 
 
-INITIALIZING THE TLS CERTIFICATE:
-
+# INITIALIZING THE TLS CERTIFICATE:
+```
                    DNS: *.snif.xyz
                          |               (no public IP or DNS hostname)
                          v
@@ -90,11 +91,11 @@ Certificate     | snif-cert:     |     |                                |
 |   Issue >-----> X.509 cert     >-----> X.509 cert for host1.snif.xyz  |
 |         |     |                |     |                                |
 +---------+     +----------------+     +--------------------------------+
+```
 
 
-
-ACCEPTING TLS CONNECTIONS:
-
+# ACCEPTING TLS CONNECTIONS:
+```
                    DNS: *.snif.xyz
                          |               (no public IP or DNS hostname)
                          v
@@ -121,11 +122,11 @@ ACCEPTING TLS CONNECTIONS:
 | any TLS enabled client,  |
 | anywhere on the Internet |
 +--------------------------+
+```
 
 
-
-EXAMPLE SETUP:
-
+# EXAMPLE SETUP:
+```
 # SNIF Relay Server:
 #
 # Run an http/https server (apache / nginx / ...)
@@ -183,32 +184,33 @@ snifd 443 1443
 # - relay the traffic with local TCP 2443, the local app on 2443 is expected to
 #   handle TLS using "snif.crt" and "snif.key"
 snifd -d -c snif.crt -k snif.key -a https://snif.example.com:4443/ 443:^80 1443:2443
+```
 
 
-
-BEWARE OF ROOT CERT EXPIRATION!
+# BEWARE OF ROOT CERT EXPIRATION!
 
 DST Root X3 has expired on 09/30/21.
 On a Linux/Unix platform - try
+```
 curl https://letsencrypt.org
+```
 If getting a certificate error - take care of your CA trust root first.
 
 
 
-CONTENTS:
-
+# CONTENTS:
+```
 lib/        SNIF Connector libraries source code
-snifd/      SNIF Connector daemon source code
-ca-proxy/   CA Proxy scripts and web api
+snifd/      SNIF Daemon source code, Relay and Connector
+ca-proxy/   CA Proxy scripts and web API
+```
 
+# REQUIREMENTS:
 
-
-REQUIREMENTS:
-
-snifd:
+## snifd:
     OpenSSL >= 1.0.1
     cURL
-ca-proxy:
+## ca-proxy:
     http + https server + .htaccess
     PHP
     perl + cpan
