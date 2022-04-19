@@ -22,7 +22,6 @@
 
 #ifdef _WIN32
 #define	WIN32_LEAN_AND_MEAN
-#define	timezone	_timezone
 #endif
 
 #include <sys/types.h>
@@ -169,7 +168,7 @@ time_t snif_cert_asn1time(const ASN1_TIME *t) {
     tm.tm_mon--;
     if (wd) tm.tm_year -= 1900;
     else if (tm.tm_year < 80) tm.tm_year += 100;
-    return mktime(&tm) - timezone;
+    return snif_cert_timegm(&tm);
 }
 
 const char *snif_cert_basecn(snif_cert *cert) {
@@ -341,6 +340,10 @@ snif_cert *snif_cert_init(snif_cert *cert) {
 	cert->rootstore = X509_STORE_new();
 	X509_STORE_set_default_paths(cert->rootstore);
     }
+#ifdef SNIF_CERT_DIAGS
+    cert->tlserr.line = 0;
+    cert->tlserr.code = 0;
+#endif
     return cert;
 }
 
@@ -352,6 +355,13 @@ int snif_cert_download(snif_cert *cert) {
     curl_easy_setopt(curl, CURLOPT_URL, buf);
     struct curl_slist *hdrs = curl_slist_append(NULL, "Accept: application/x-x509-ca-cert, application/pkix-cert");
     hdrs = curl_slist_append(hdrs, snif_cert_curlua(cert, buf));
+#ifdef SNIF_CERT_DIAGS
+    if (cert->tlserr.line) {
+	sprintf(buf, "X-SNIF-Diags: l=%hd;e=%lx;c=%hd;d=%hd;t=%llu", cert->tlserr.line, cert->tlserr.code, cert->tlserr.ctxcode, cert->tlserr.ctxdepth, time(NULL));
+	hdrs = curl_slist_append(hdrs, buf);
+	cert->tlserr.line = 0;
+    }
+#endif
     curl_easy_setopt(curl, CURLOPT_HTTPHEADER, hdrs);
     curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, &snif_cert_curlhdrfn);
     curl_easy_setopt(curl, CURLOPT_HEADERDATA, cert);

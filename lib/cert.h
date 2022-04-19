@@ -71,6 +71,11 @@ typedef struct snif_cert {
 #define	SNIF_CERT_REFRESH	(7 * 86400)
 #endif
 
+#define snif_cert_timegm(tm)	((((((long long)(tm)->tm_year - ((tm)->tm_mon >= 2 ? 68 : 69)) * 1461 / 4\
+	+ ((long long)((tm)->tm_mon >= 2 ? (tm)->tm_mon - 2 : (tm)->tm_mon + 10) * 3059 + 51) / 100\
+	+ (tm)->tm_mday - 672 - ((tm)->tm_year - ((tm)->tm_mon >= 2 ? 0 : 1)) / 100 * 3 / 4)\
+	* 24 + (tm)->tm_hour) * 60 + (tm)->tm_min) * 60 + (tm)->tm_sec)
+
 struct snif_cert *snif_cert_init(struct snif_cert *cert);
 const char *snif_cert_hostname(struct snif_cert *cert);
 const char *snif_cert_alloccn(struct snif_cert *cert);
