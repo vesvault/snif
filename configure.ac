@@ -3,13 +3,15 @@
 
 
 AC_PREREQ([2.69])
-AC_INIT([snif], [0.91], [bugs@vesvault.com])
+AC_INIT([snif], [0.92], [bugs@vesvault.com])
 AC_CONFIG_SRCDIR([snifd/snifd.c])
 AC_CONFIG_HEADERS([config.h])
 
 AC_CONFIG_AUX_DIR([build-aux])
 
-AM_INIT_AUTOMAKE([1.0 subdir-objects])
+AM_INIT_AUTOMAKE([1.0 subdir-objects foreign])
+
+AM_MAINTAINER_MODE([disable])
 
 # Checks for programs.
 AC_PROG_CC

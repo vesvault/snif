@@ -116,18 +116,21 @@ void snif_watch_pollfn(snif_sock *sock, struct pollfd *pollfd) {
 	    return snif_watch_free(sock);
     }
     if (pollfd->fd < 0) return snif_sock_initpoll(sock, pollfd);
-    if (sock->chktime + SNIF_WATCH_ALIVE < snif_time() + sock->listen->tmout.idle) {
-	char buf[64];
-	char *p = buf;
-	snif_conn_idle(&p, sizeof(buf))
-	    && snif_sock_out(sock, buf, p - buf) > 0
-	    && (snif_sock_tmout(sock, sock->listen->tmout.idle), 0);
-    }
-    if (snif_sock_chktmout(sock) < 0) return;
+    if ((!sock->rd || !sock->watch.alive) && snif_sock_chktmout(sock) < 0) return;
     if (sock->rd) {
 	int bytes = snif_sock_rw(sock, pollfd, sock->watch.ssl);
 	if (bytes >= 0) {
-	    if (bytes > 0) snif_sock_tmout(sock, sock->listen->tmout.idle);
+	    if (bytes > 0) {
+		sock->watch.alive = sock->listen->tmout.alive;
+		snif_sock_tmout(sock, sock->listen->tmout.watch);
+	    } else {
+		char buf[64];
+		char *p = buf;
+		snif_conn_idle(&p, sizeof(buf))
+		    && snif_sock_out(sock, buf, p - buf) > 0
+		    && (snif_sock_tmout(sock, sock->watch.alive), 0);
+		sock->watch.alive = 0;
+	    }
 	    while (1) {
 		char *p = sock->rd->buf;
 		snif_conn *conn = snif_conn_receive((const char **)&p, sock->rd->len);
@@ -165,7 +168,8 @@ void snif_watch_pollfn(snif_sock *sock, struct pollfd *pollfd) {
     if (r > 0) {
 	sock->rd = snif_buf_new(SNIF_WATCH_BUFSIZE);
 	sock->wr = snif_buf_new(SNIF_WATCH_BUFSIZE);
-	snif_sock_tmout(sock, sock->listen->tmout.idle);
+	snif_sock_tmout(sock, sock->listen->tmout.watch);
+	sock->watch.alive = sock->listen->tmout.alive;
 	char buf[288];
 	char *p = buf;
 	if (snif_conn_start(&p, sizeof(buf), sock->watch.rhost) > 0) {
@@ -194,6 +198,7 @@ snif_sock *snif_watch(const char *rhost, const char *rport, struct snif_cert *ce
     skconn->watch.ports = ports;
     skconn->watch.cert = cert;
     skconn->watch.ssl = NULL;
+    skconn->watch.alive = 0;
     skconn->fd = fd;
     skconn->pollfn = &snif_watch_pollfn;
     skconn->listen = lstn;

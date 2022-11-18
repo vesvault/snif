@@ -23,7 +23,7 @@
 #ifdef PACKAGE_VERSION
 #define	SNIF_VERSION_STR	PACKAGE_VERSION
 #else
-#define	SNIF_VERSION_STR	"0.91"
+#define	SNIF_VERSION_STR	"0.92"
 #endif
 
 extern const char *snif_banner;

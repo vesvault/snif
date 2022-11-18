@@ -22,7 +22,6 @@
 
 
 #define	SNIF_WATCH_BUFSIZE	4096
-#define	SNIF_WATCH_ALIVE	6
 
 typedef struct snif_watch_port {
     const char *port;
