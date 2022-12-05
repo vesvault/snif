@@ -23,7 +23,7 @@
 ```
 
 
-SUMMARY:
+# SUMMARY:
 
 SNIF enables anonymous end-to-end public trust TLS communications between apps
 through a designated SNIF relay. By providing TLS public trust on a full
