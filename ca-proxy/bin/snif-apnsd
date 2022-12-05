@@ -25,7 +25,7 @@
 use Net::APNS::Simple;
 use MIME::Base64;
 
-$BaseDir = `. /etc/snif.conf; echo \$SNIF_CA_PROXY;`;
+$BaseDir = `. /etc/snif.conf; echo -n \$SNIF_CA_PROXY;`;
 
 $EtcDir = "$BaseDir/etc";
 $ApnsDir = "$BaseDir/apns";
