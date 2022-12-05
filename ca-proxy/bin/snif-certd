@@ -28,7 +28,7 @@ use Crypt::LE;
 # HTTP verification are being issued
 use Net::DNS;
 
-$BaseDir = "/home/snif";
+$BaseDir = `. /etc/snif.conf; echo \$SNIF_CA_PROXY;`;
 
 $WWWdir = "$BaseDir/public_html";
 $CSRdir = "$BaseDir/csr";

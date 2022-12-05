@@ -126,7 +126,8 @@ int main(int argc, char **argv, char **env) {
 	    .conn = 30,
 	    .idle = 1800,
 	    .retry = 15,
-	    .alive = 10
+           .alive = 10,
+           .watch = 30
 	},
 	.shutdn = 0
     };

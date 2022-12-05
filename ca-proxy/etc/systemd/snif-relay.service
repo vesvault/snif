@@ -1,0 +1,12 @@
+[Unit]
+Description=SNIF Relay
+
+[Service]
+User=snif
+Group=snif
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+LimitNOFILE=1048576
+ExecStart=/usr/bin/snif-relay
+
+[Install]
+WantedBy=multi-user.target

@@ -25,15 +25,21 @@
 use Net::APNS::Simple;
 use MIME::Base64;
 
-$EtcDir = "/home/snif/etc";
-$ApnsDir = "/home/snif/apns";
-$LogDir = "/home/snif/log";
-$CtlFifo ="/home/snif/var/snif-apnsd.ctl";
-$BundleId = "com.vesvault.vesmail";
-$TeamId = "UQ67P8NQ7H";
+$BaseDir = `. /etc/snif.conf; echo \$SNIF_CA_PROXY;`;
+
+$EtcDir = "$BaseDir/etc";
+$ApnsDir = "$BaseDir/apns";
+$LogDir = "$BaseDir/log";
+$CtlFifo ="$BaseDir/var/snifd-out-apnsd.ctl";
+
+# APNS configuration
+$BundleId = "com.example.app";
+$TeamId = "ABCD123456";
+$Prod = 1;
+
+
 $ResendAfter = 20;
 $MaskChars = 7;
-$Prod = 1;
 
 $Apns;
 %Atime;
@@ -48,14 +54,11 @@ sub apns_send {
 	    key_file => "$EtcDir/$crtf.key",
 	    bundle_id => $BundleId,
 	    apns_push_type => "alert",
-#	    apns_push_type => "background",
-#	    apns_priority => 5
 	);
     }
     return if !$Apns;
     $Apns->prepare($token, {aps => {
 	alert => { title => "Connection from an app", body => $msg },
-#	'mutable-content' => 1,
 	'content-available' => 1
     }}, sub {
 	apns_rspfn($_[0], $_[1], $token);

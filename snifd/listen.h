@@ -36,6 +36,7 @@ typedef struct snif_listen {
 	int idle;
 	int retry;
 	int alive;
+       int watch;
     } tmout;
     struct snif_sock *ctl;
     struct snif_sock *srv;

@@ -9,7 +9,7 @@ AC_CONFIG_HEADERS([config.h])
 
 AC_CONFIG_AUX_DIR([build-aux])
 
-AM_INIT_AUTOMAKE([1.0 subdir-objects])
+AM_INIT_AUTOMAKE([1.0 subdir-objects foreign])
 
 # Checks for programs.
 AC_PROG_CC

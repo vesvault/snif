@@ -21,20 +21,37 @@
  **************************************************************************/
 
 
-Suggested location for the CA proxy files: /home/snif
+Suggested location for the CA proxy files: /var/lib/snif/ca-proxy
+
 Suggested user and group name for processes and files: snif
+
 public_html/ is the HTTP root for catch-all SNIF domains
+
 secure_html/ is the HTTPS root for the dedicated initialization domain,
     such as https://snif.example.com, a custom port such as 4443 is suggested.
     The initialization URL is to be used by SNIF connector on the devices
     to acquire a hostname and a certificate, snifd -a argument.
-Crypt::LE is required by bin/snif-certd for LEt's Encrypt ACME,
+
+Crypt::LE is required by bin/snif-certd for Let's Encrypt ACME,
     use cpan install
+
 Net::DNS is required if using wildcard certs, use cpan install
+
 etc/{SNIF_initialization_domain}.domains contains the list of {domain} names
     to issue SNIF hosts as subdomains that are expected to point to CNAME
-    snif-pool.{domain}, and served by HTTP public.html/
-bin/snif-apnsd is an optional process that sends APNS notifications to wake up
+    snif-pool.{domain}, and to be served by HTTP public.html/
+
+etc/{SNIF_domain}.tsig must contain a DDNS TSIG that permits managing IN TXT
+    RRs for snif-pool.{SNIF_domain} for CA domain verification.
+
+snif-certd daemon needs to be launched on the server start to process
+    the certificate issuance for SNIF connectors.
+
+snif-arc needs to be launched periodically, recommended once a day via
+    crontab, to archive expiring certificates and manitain automatic
+    certificate reissuance.
+
+snif-apnsd is an optional process that sends APNS notifications to wake up
     a sleeping iOS device to serve an incoming connection, as long as the
     device has registered with APNS and has communicated the hex APNS ID to
     SNIF relay over the control connection by sending
