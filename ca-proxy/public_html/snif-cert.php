@@ -21,7 +21,9 @@
  *
  **************************************************************************/
 
+# Set the base AuthUrl for the certificate authorization
 $AuthUrl = "https://snif.snif.xyz:4443/";
+
 $BasePath = $_SERVER['DOCUMENT_ROOT'] . "/..";
 
 $CfgPath = "$BasePath/cfg";

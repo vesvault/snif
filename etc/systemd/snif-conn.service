@@ -1,10 +1,10 @@
 [Unit]
-Description=SNIF CA Proxy
+Description=SNIF Connector
 
 [Service]
 User=snif
 Group=snif
-ExecStart=/home/snif/bin/snif-certd
+ExecStart=/usr/bin/snif-conn -d
 
 [Install]
 WantedBy=multi-user.target

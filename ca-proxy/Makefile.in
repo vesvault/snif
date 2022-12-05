@@ -15,7 +15,6 @@
 @SET_MAKE@
 
 
-
 VPATH = @srcdir@
 am__is_gnu_make = { \
   if test -z '$(MAKELEVEL)'; then \
@@ -88,7 +87,6 @@ POST_INSTALL = :
 NORMAL_UNINSTALL = :
 PRE_UNINSTALL = :
 POST_UNINSTALL = :
-bin_PROGRAMS = snifd/snifd$(EXEEXT)
 subdir = .
 ACLOCAL_M4 = $(top_srcdir)/aclocal.m4
 am__aclocal_m4_deps = $(top_srcdir)/configure.ac
@@ -99,26 +97,8 @@ DIST_COMMON = $(srcdir)/Makefile.am $(top_srcdir)/configure \
 am__CONFIG_DISTCLEAN_FILES = config.status config.cache config.log \
  configure.lineno config.status.lineno
 mkinstalldirs = $(install_sh) -d
-CONFIG_HEADER = config.h
 CONFIG_CLEAN_FILES =
 CONFIG_CLEAN_VPATH_FILES =
-am__installdirs = "$(DESTDIR)$(bindir)" "$(DESTDIR)$(bindir)" \
-	"$(DESTDIR)$(snifd_etcdir)"
-PROGRAMS = $(bin_PROGRAMS)
-am__dirstamp = $(am__leading_dot)dirstamp
-am__objects_1 = lib/cert.$(OBJEXT) lib/conn.$(OBJEXT)
-am__objects_2 = snifd/listen.$(OBJEXT) snifd/sock.$(OBJEXT) \
-	snifd/port.$(OBJEXT) snifd/host.$(OBJEXT) snifd/buf.$(OBJEXT) \
-	snifd/ctl.$(OBJEXT) snifd/cln.$(OBJEXT) snifd/srv.$(OBJEXT) \
-	snifd/fifo.$(OBJEXT) snifd/abuse.$(OBJEXT) \
-	snifd/watch.$(OBJEXT) snifd/fwd.$(OBJEXT) snifd/util.$(OBJEXT) \
-	snifd/jTree.$(OBJEXT) snifd/help.$(OBJEXT) \
-	snifd/snifd.$(OBJEXT)
-am__objects_3 =
-am_snifd_snifd_OBJECTS = $(am__objects_1) $(am__objects_2) \
-	$(am__objects_3) $(am__objects_3)
-snifd_snifd_OBJECTS = $(am_snifd_snifd_OBJECTS)
-snifd_snifd_DEPENDENCIES =
 am__vpath_adj_setup = srcdirstrip=`echo "$(srcdir)" | sed 's|.|.|g'`;
 am__vpath_adj = case $$p in \
     $(srcdir)/*) f=`echo "$$p" | sed "s|^$$srcdirstrip/||"`;; \
@@ -146,6 +126,9 @@ am__uninstall_files_from_dir = { \
     || { echo " ( cd '$$dir' && rm -f" $$files ")"; \
          $(am__cd) "$$dir" && rm -f $$files; }; \
   }
+am__installdirs = "$(DESTDIR)$(bindir)" \
+	"$(DESTDIR)$(snifd_ca_basedir)" "$(DESTDIR)$(snifd_ca_etcdir)" \
+	"$(DESTDIR)$(snifd_ca_logdir)"
 SCRIPTS = $(bin_SCRIPTS)
 AM_V_P = $(am__v_P_@AM_V@)
 am__v_P_ = $(am__v_P_@AM_DEFAULT_V@)
@@ -159,68 +142,20 @@ AM_V_at = $(am__v_at_@AM_V@)
 am__v_at_ = $(am__v_at_@AM_DEFAULT_V@)
 am__v_at_0 = @
 am__v_at_1 = 
-DEFAULT_INCLUDES = -I.@am__isrc@
-depcomp = $(SHELL) $(top_srcdir)/build-aux/depcomp
-am__maybe_remake_depfiles = depfiles
-am__depfiles_remade = lib/$(DEPDIR)/cert.Po lib/$(DEPDIR)/conn.Po \
-	snifd/$(DEPDIR)/abuse.Po snifd/$(DEPDIR)/buf.Po \
-	snifd/$(DEPDIR)/cln.Po snifd/$(DEPDIR)/ctl.Po \
-	snifd/$(DEPDIR)/fifo.Po snifd/$(DEPDIR)/fwd.Po \
-	snifd/$(DEPDIR)/help.Po snifd/$(DEPDIR)/host.Po \
-	snifd/$(DEPDIR)/jTree.Po snifd/$(DEPDIR)/listen.Po \
-	snifd/$(DEPDIR)/port.Po snifd/$(DEPDIR)/snifd.Po \
-	snifd/$(DEPDIR)/sock.Po snifd/$(DEPDIR)/srv.Po \
-	snifd/$(DEPDIR)/util.Po snifd/$(DEPDIR)/watch.Po
-am__mv = mv -f
-COMPILE = $(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) \
-	$(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS)
-AM_V_CC = $(am__v_CC_@AM_V@)
-am__v_CC_ = $(am__v_CC_@AM_DEFAULT_V@)
-am__v_CC_0 = @echo "  CC      " $@;
-am__v_CC_1 = 
-CCLD = $(CC)
-LINK = $(CCLD) $(AM_CFLAGS) $(CFLAGS) $(AM_LDFLAGS) $(LDFLAGS) -o $@
-AM_V_CCLD = $(am__v_CCLD_@AM_V@)
-am__v_CCLD_ = $(am__v_CCLD_@AM_DEFAULT_V@)
-am__v_CCLD_0 = @echo "  CCLD    " $@;
-am__v_CCLD_1 = 
-SOURCES = $(snifd_snifd_SOURCES)
-DIST_SOURCES = $(snifd_snifd_SOURCES)
+SOURCES =
+DIST_SOURCES =
 am__can_run_installinfo = \
   case $$AM_UPDATE_INFO_DIR in \
     n|no|NO) false;; \
     *) (install-info --version) >/dev/null 2>&1;; \
   esac
-DATA = $(snifd_etc_DATA)
-am__tagged_files = $(HEADERS) $(SOURCES) $(TAGS_FILES) $(LISP) \
-	config.h.in
-# Read a list of newline-separated strings from the standard input,
-# and print each of them once, without duplicates.  Input order is
-# *not* preserved.
-am__uniquify_input = $(AWK) '\
-  BEGIN { nonempty = 0; } \
-  { items[$$0] = 1; nonempty = 1; } \
-  END { if (nonempty) { for (i in items) print i; }; } \
-'
-# Make sure the list of sources is unique.  This is necessary because,
-# e.g., the same source file might be shared among _SOURCES variables
-# for different programs/libraries.
-am__define_uniq_tagged_files = \
-  list='$(am__tagged_files)'; \
-  unique=`for i in $$list; do \
-    if test -f "$$i"; then echo $$i; else echo $(srcdir)/$$i; fi; \
-  done | $(am__uniquify_input)`
-ETAGS = etags
-CTAGS = ctags
-CSCOPE = cscope
-AM_RECURSIVE_TARGETS = cscope
-am__DIST_COMMON = $(srcdir)/Makefile.in $(srcdir)/config.h.in \
-	$(top_srcdir)/build-aux/compile \
-	$(top_srcdir)/build-aux/depcomp \
-	$(top_srcdir)/build-aux/install-sh \
-	$(top_srcdir)/build-aux/missing AUTHORS COPYING ChangeLog \
-	INSTALL NEWS build-aux/compile build-aux/depcomp \
-	build-aux/install-sh build-aux/missing
+DATA = $(snifd_ca_base_DATA) $(snifd_ca_etc_DATA) $(snifd_ca_log_DATA)
+am__tagged_files = $(HEADERS) $(SOURCES) $(TAGS_FILES) $(LISP)
+am__DIST_COMMON = $(srcdir)/Makefile.in \
+	$(top_srcdir)/../build-aux/install-sh \
+	$(top_srcdir)/../build-aux/missing ../build-aux/compile \
+	../build-aux/depcomp ../build-aux/install-sh \
+	../build-aux/missing README
 DISTFILES = $(DIST_COMMON) $(DIST_SOURCES) $(TEXINFOS) $(EXTRA_DIST)
 distdir = $(PACKAGE)-$(VERSION)
 top_distdir = $(distdir)
@@ -247,33 +182,22 @@ AUTOCONF = @AUTOCONF@
 AUTOHEADER = @AUTOHEADER@
 AUTOMAKE = @AUTOMAKE@
 AWK = @AWK@
-CC = @CC@
-CCDEPMODE = @CCDEPMODE@
-CFLAGS = @CFLAGS@
-CPP = @CPP@
-CPPFLAGS = @CPPFLAGS@
 CYGPATH_W = @CYGPATH_W@
 DEFS = @DEFS@
-DEPDIR = @DEPDIR@
 ECHO_C = @ECHO_C@
 ECHO_N = @ECHO_N@
 ECHO_T = @ECHO_T@
-EGREP = @EGREP@
-EXEEXT = @EXEEXT@
-GREP = @GREP@
 INSTALL = @INSTALL@
 INSTALL_DATA = @INSTALL_DATA@
 INSTALL_PROGRAM = @INSTALL_PROGRAM@
 INSTALL_SCRIPT = @INSTALL_SCRIPT@
 INSTALL_STRIP_PROGRAM = @INSTALL_STRIP_PROGRAM@
-LDFLAGS = @LDFLAGS@
 LIBOBJS = @LIBOBJS@
 LIBS = @LIBS@
 LTLIBOBJS = @LTLIBOBJS@
 MAINT = @MAINT@
 MAKEINFO = @MAKEINFO@
 MKDIR_P = @MKDIR_P@
-OBJEXT = @OBJEXT@
 PACKAGE = @PACKAGE@
 PACKAGE_BUGREPORT = @PACKAGE_BUGREPORT@
 PACKAGE_NAME = @PACKAGE_NAME@
@@ -290,10 +214,7 @@ abs_builddir = @abs_builddir@
 abs_srcdir = @abs_srcdir@
 abs_top_builddir = @abs_top_builddir@
 abs_top_srcdir = @abs_top_srcdir@
-ac_ct_CC = @ac_ct_CC@
-am__include = @am__include@
 am__leading_dot = @am__leading_dot@
-am__quote = @am__quote@
 am__tar = @am__tar@
 am__untar = @am__untar@
 bindir = @bindir@
@@ -329,55 +250,16 @@ target_alias = @target_alias@
 top_build_prefix = @top_build_prefix@
 top_builddir = @top_builddir@
 top_srcdir = @top_srcdir@
-LIB_CFILES = lib/cert.c \
-lib/conn.c
-
-LIB_HFILES = lib/cert.h \
-lib/conn.h
-
-SNIFD_CFILES = snifd/listen.c \
-snifd/sock.c \
-snifd/port.c \
-snifd/host.c \
-snifd/buf.c \
-snifd/ctl.c \
-snifd/cln.c \
-snifd/srv.c \
-snifd/fifo.c \
-snifd/abuse.c \
-snifd/watch.c \
-snifd/fwd.c \
-snifd/util.c \
-snifd/jTree.c \
-snifd/help.c \
-snifd/snifd.c
-
-SNIFD_HFILES = snifd/listen.h \
-snifd/sock.h \
-snifd/port.h \
-snifd/host.h \
-snifd/buf.h \
-snifd/ctl.h \
-snifd/cln.h \
-snifd/srv.h \
-snifd/fifo.h \
-snifd/abuse.h \
-snifd/watch.h \
-snifd/fwd.h \
-snifd/util.h \
-snifd/jTree.h \
-snifd/help.h
-
-bin_SCRIPTS = bin/snif-conn
-snifd_snifd_LDADD = -lcrypto -lcurl -lssl
-snifd_snifd_SOURCES = $(LIB_CFILES) $(SNIFD_CFILES) $(LIB_HFILES) $(SNIFD_HFILES)
-snifd_etcdir = /etc/snif
-snifd_etc_DATA = etc/snif.conf
-all: config.h
-	$(MAKE) $(AM_MAKEFLAGS) all-am
+bin_SCRIPTS = ../bin/snif-relay bin/snif-certd bin/snif-arc bin/snif-apnsd
+snifd_ca_basedir = /var/lib/snif/ca-proxy
+snifd_ca_base_DATA = README
+snifd_ca_etcdir = /etc/snif/ca-proxy
+snifd_ca_etc_DATA = etc/snif.snif.xyz.domains etc/snif.xyz.tsig
+snifd_ca_logdir = /var/log/snif/
+snifd_ca_log_DATA = 
+all: all-am
 
 .SUFFIXES:
-.SUFFIXES: .c .o .obj
 am--refresh: Makefile
 	@:
 $(srcdir)/Makefile.in: @MAINTAINER_MODE_TRUE@ $(srcdir)/Makefile.am  $(am__configure_deps)
@@ -411,113 +293,6 @@ $(top_srcdir)/configure: @MAINTAINER_MODE_TRUE@ $(am__configure_deps)
 $(ACLOCAL_M4): @MAINTAINER_MODE_TRUE@ $(am__aclocal_m4_deps)
 	$(am__cd) $(srcdir) && $(ACLOCAL) $(ACLOCAL_AMFLAGS)
 $(am__aclocal_m4_deps):
-
-config.h: stamp-h1
-	@test -f $@ || rm -f stamp-h1
-	@test -f $@ || $(MAKE) $(AM_MAKEFLAGS) stamp-h1
-
-stamp-h1: $(srcdir)/config.h.in $(top_builddir)/config.status
-	@rm -f stamp-h1
-	cd $(top_builddir) && $(SHELL) ./config.status config.h
-$(srcdir)/config.h.in: @MAINTAINER_MODE_TRUE@ $(am__configure_deps) 
-	($(am__cd) $(top_srcdir) && $(AUTOHEADER))
-	rm -f stamp-h1
-	touch $@
-
-distclean-hdr:
-	-rm -f config.h stamp-h1
-install-binPROGRAMS: $(bin_PROGRAMS)
-	@$(NORMAL_INSTALL)
-	@list='$(bin_PROGRAMS)'; test -n "$(bindir)" || list=; \
-	if test -n "$$list"; then \
-	  echo " $(MKDIR_P) '$(DESTDIR)$(bindir)'"; \
-	  $(MKDIR_P) "$(DESTDIR)$(bindir)" || exit 1; \
-	fi; \
-	for p in $$list; do echo "$$p $$p"; done | \
-	sed 's/$(EXEEXT)$$//' | \
-	while read p p1; do if test -f $$p \
-	  ; then echo "$$p"; echo "$$p"; else :; fi; \
-	done | \
-	sed -e 'p;s,.*/,,;n;h' \
-	    -e 's|.*|.|' \
-	    -e 'p;x;s,.*/,,;s/$(EXEEXT)$$//;$(transform);s/$$/$(EXEEXT)/' | \
-	sed 'N;N;N;s,\n, ,g' | \
-	$(AWK) 'BEGIN { files["."] = ""; dirs["."] = 1 } \
-	  { d=$$3; if (dirs[d] != 1) { print "d", d; dirs[d] = 1 } \
-	    if ($$2 == $$4) files[d] = files[d] " " $$1; \
-	    else { print "f", $$3 "/" $$4, $$1; } } \
-	  END { for (d in files) print "f", d, files[d] }' | \
-	while read type dir files; do \
-	    if test "$$dir" = .; then dir=; else dir=/$$dir; fi; \
-	    test -z "$$files" || { \
-	      echo " $(INSTALL_PROGRAM_ENV) $(INSTALL_PROGRAM) $$files '$(DESTDIR)$(bindir)$$dir'"; \
-	      $(INSTALL_PROGRAM_ENV) $(INSTALL_PROGRAM) $$files "$(DESTDIR)$(bindir)$$dir" || exit $$?; \
-	    } \
-	; done
-
-uninstall-binPROGRAMS:
-	@$(NORMAL_UNINSTALL)
-	@list='$(bin_PROGRAMS)'; test -n "$(bindir)" || list=; \
-	files=`for p in $$list; do echo "$$p"; done | \
-	  sed -e 'h;s,^.*/,,;s/$(EXEEXT)$$//;$(transform)' \
-	      -e 's/$$/$(EXEEXT)/' \
-	`; \
-	test -n "$$list" || exit 0; \
-	echo " ( cd '$(DESTDIR)$(bindir)' && rm -f" $$files ")"; \
-	cd "$(DESTDIR)$(bindir)" && rm -f $$files
-
-clean-binPROGRAMS:
-	-test -z "$(bin_PROGRAMS)" || rm -f $(bin_PROGRAMS)
-lib/$(am__dirstamp):
-	@$(MKDIR_P) lib
-	@: > lib/$(am__dirstamp)
-lib/$(DEPDIR)/$(am__dirstamp):
-	@$(MKDIR_P) lib/$(DEPDIR)
-	@: > lib/$(DEPDIR)/$(am__dirstamp)
-lib/cert.$(OBJEXT): lib/$(am__dirstamp) lib/$(DEPDIR)/$(am__dirstamp)
-lib/conn.$(OBJEXT): lib/$(am__dirstamp) lib/$(DEPDIR)/$(am__dirstamp)
-snifd/$(am__dirstamp):
-	@$(MKDIR_P) snifd
-	@: > snifd/$(am__dirstamp)
-snifd/$(DEPDIR)/$(am__dirstamp):
-	@$(MKDIR_P) snifd/$(DEPDIR)
-	@: > snifd/$(DEPDIR)/$(am__dirstamp)
-snifd/listen.$(OBJEXT): snifd/$(am__dirstamp) \
-	snifd/$(DEPDIR)/$(am__dirstamp)
-snifd/sock.$(OBJEXT): snifd/$(am__dirstamp) \
-	snifd/$(DEPDIR)/$(am__dirstamp)
-snifd/port.$(OBJEXT): snifd/$(am__dirstamp) \
-	snifd/$(DEPDIR)/$(am__dirstamp)
-snifd/host.$(OBJEXT): snifd/$(am__dirstamp) \
-	snifd/$(DEPDIR)/$(am__dirstamp)
-snifd/buf.$(OBJEXT): snifd/$(am__dirstamp) \
-	snifd/$(DEPDIR)/$(am__dirstamp)
-snifd/ctl.$(OBJEXT): snifd/$(am__dirstamp) \
-	snifd/$(DEPDIR)/$(am__dirstamp)
-snifd/cln.$(OBJEXT): snifd/$(am__dirstamp) \
-	snifd/$(DEPDIR)/$(am__dirstamp)
-snifd/srv.$(OBJEXT): snifd/$(am__dirstamp) \
-	snifd/$(DEPDIR)/$(am__dirstamp)
-snifd/fifo.$(OBJEXT): snifd/$(am__dirstamp) \
-	snifd/$(DEPDIR)/$(am__dirstamp)
-snifd/abuse.$(OBJEXT): snifd/$(am__dirstamp) \
-	snifd/$(DEPDIR)/$(am__dirstamp)
-snifd/watch.$(OBJEXT): snifd/$(am__dirstamp) \
-	snifd/$(DEPDIR)/$(am__dirstamp)
-snifd/fwd.$(OBJEXT): snifd/$(am__dirstamp) \
-	snifd/$(DEPDIR)/$(am__dirstamp)
-snifd/util.$(OBJEXT): snifd/$(am__dirstamp) \
-	snifd/$(DEPDIR)/$(am__dirstamp)
-snifd/jTree.$(OBJEXT): snifd/$(am__dirstamp) \
-	snifd/$(DEPDIR)/$(am__dirstamp)
-snifd/help.$(OBJEXT): snifd/$(am__dirstamp) \
-	snifd/$(DEPDIR)/$(am__dirstamp)
-snifd/snifd.$(OBJEXT): snifd/$(am__dirstamp) \
-	snifd/$(DEPDIR)/$(am__dirstamp)
-
-snifd/snifd$(EXEEXT): $(snifd_snifd_OBJECTS) $(snifd_snifd_DEPENDENCIES) $(EXTRA_snifd_snifd_DEPENDENCIES) snifd/$(am__dirstamp)
-	@rm -f snifd/snifd$(EXEEXT)
-	$(AM_V_CCLD)$(LINK) $(snifd_snifd_OBJECTS) $(snifd_snifd_LDADD) $(LIBS)
 install-binSCRIPTS: $(bin_SCRIPTS)
 	@$(NORMAL_INSTALL)
 	@list='$(bin_SCRIPTS)'; test -n "$(bindir)" || list=; \
@@ -553,135 +328,75 @@ uninstall-binSCRIPTS:
 	files=`for p in $$list; do echo "$$p"; done | \
 	       sed -e 's,.*/,,;$(transform)'`; \
 	dir='$(DESTDIR)$(bindir)'; $(am__uninstall_files_from_dir)
-
-mostlyclean-compile:
-	-rm -f *.$(OBJEXT)
-	-rm -f lib/*.$(OBJEXT)
-	-rm -f snifd/*.$(OBJEXT)
-
-distclean-compile:
-	-rm -f *.tab.c
-
-@AMDEP_TRUE@@am__include@ @am__quote@lib/$(DEPDIR)/cert.Po@am__quote@ # am--include-marker
-@AMDEP_TRUE@@am__include@ @am__quote@lib/$(DEPDIR)/conn.Po@am__quote@ # am--include-marker
-@AMDEP_TRUE@@am__include@ @am__quote@snifd/$(DEPDIR)/abuse.Po@am__quote@ # am--include-marker
-@AMDEP_TRUE@@am__include@ @am__quote@snifd/$(DEPDIR)/buf.Po@am__quote@ # am--include-marker
-@AMDEP_TRUE@@am__include@ @am__quote@snifd/$(DEPDIR)/cln.Po@am__quote@ # am--include-marker
-@AMDEP_TRUE@@am__include@ @am__quote@snifd/$(DEPDIR)/ctl.Po@am__quote@ # am--include-marker
-@AMDEP_TRUE@@am__include@ @am__quote@snifd/$(DEPDIR)/fifo.Po@am__quote@ # am--include-marker
-@AMDEP_TRUE@@am__include@ @am__quote@snifd/$(DEPDIR)/fwd.Po@am__quote@ # am--include-marker
-@AMDEP_TRUE@@am__include@ @am__quote@snifd/$(DEPDIR)/help.Po@am__quote@ # am--include-marker
-@AMDEP_TRUE@@am__include@ @am__quote@snifd/$(DEPDIR)/host.Po@am__quote@ # am--include-marker
-@AMDEP_TRUE@@am__include@ @am__quote@snifd/$(DEPDIR)/jTree.Po@am__quote@ # am--include-marker
-@AMDEP_TRUE@@am__include@ @am__quote@snifd/$(DEPDIR)/listen.Po@am__quote@ # am--include-marker
-@AMDEP_TRUE@@am__include@ @am__quote@snifd/$(DEPDIR)/port.Po@am__quote@ # am--include-marker
-@AMDEP_TRUE@@am__include@ @am__quote@snifd/$(DEPDIR)/snifd.Po@am__quote@ # am--include-marker
-@AMDEP_TRUE@@am__include@ @am__quote@snifd/$(DEPDIR)/sock.Po@am__quote@ # am--include-marker
-@AMDEP_TRUE@@am__include@ @am__quote@snifd/$(DEPDIR)/srv.Po@am__quote@ # am--include-marker
-@AMDEP_TRUE@@am__include@ @am__quote@snifd/$(DEPDIR)/util.Po@am__quote@ # am--include-marker
-@AMDEP_TRUE@@am__include@ @am__quote@snifd/$(DEPDIR)/watch.Po@am__quote@ # am--include-marker
-
-$(am__depfiles_remade):
-	@$(MKDIR_P) $(@D)
-	@echo '# dummy' >$@-t && $(am__mv) $@-t $@
-
-am--depfiles: $(am__depfiles_remade)
-
-.c.o:
-@am__fastdepCC_TRUE@	$(AM_V_CC)depbase=`echo $@ | sed 's|[^/]*$$|$(DEPDIR)/&|;s|\.o$$||'`;\
-@am__fastdepCC_TRUE@	$(COMPILE) -MT $@ -MD -MP -MF $$depbase.Tpo -c -o $@ $< &&\
-@am__fastdepCC_TRUE@	$(am__mv) $$depbase.Tpo $$depbase.Po
-@AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='$<' object='$@' libtool=no @AMDEPBACKSLASH@
-@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
-@am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(COMPILE) -c -o $@ $<
-
-.c.obj:
-@am__fastdepCC_TRUE@	$(AM_V_CC)depbase=`echo $@ | sed 's|[^/]*$$|$(DEPDIR)/&|;s|\.obj$$||'`;\
-@am__fastdepCC_TRUE@	$(COMPILE) -MT $@ -MD -MP -MF $$depbase.Tpo -c -o $@ `$(CYGPATH_W) '$<'` &&\
-@am__fastdepCC_TRUE@	$(am__mv) $$depbase.Tpo $$depbase.Po
-@AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='$<' object='$@' libtool=no @AMDEPBACKSLASH@
-@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
-@am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(COMPILE) -c -o $@ `$(CYGPATH_W) '$<'`
-install-snifd_etcDATA: $(snifd_etc_DATA)
+install-snifd_ca_baseDATA: $(snifd_ca_base_DATA)
 	@$(NORMAL_INSTALL)
-	@list='$(snifd_etc_DATA)'; test -n "$(snifd_etcdir)" || list=; \
+	@list='$(snifd_ca_base_DATA)'; test -n "$(snifd_ca_basedir)" || list=; \
 	if test -n "$$list"; then \
-	  echo " $(MKDIR_P) '$(DESTDIR)$(snifd_etcdir)'"; \
-	  $(MKDIR_P) "$(DESTDIR)$(snifd_etcdir)" || exit 1; \
+	  echo " $(MKDIR_P) '$(DESTDIR)$(snifd_ca_basedir)'"; \
+	  $(MKDIR_P) "$(DESTDIR)$(snifd_ca_basedir)" || exit 1; \
 	fi; \
 	for p in $$list; do \
 	  if test -f "$$p"; then d=; else d="$(srcdir)/"; fi; \
 	  echo "$$d$$p"; \
 	done | $(am__base_list) | \
 	while read files; do \
-	  echo " $(INSTALL_DATA) $$files '$(DESTDIR)$(snifd_etcdir)'"; \
-	  $(INSTALL_DATA) $$files "$(DESTDIR)$(snifd_etcdir)" || exit $$?; \
+	  echo " $(INSTALL_DATA) $$files '$(DESTDIR)$(snifd_ca_basedir)'"; \
+	  $(INSTALL_DATA) $$files "$(DESTDIR)$(snifd_ca_basedir)" || exit $$?; \
 	done
 
-uninstall-snifd_etcDATA:
+uninstall-snifd_ca_baseDATA:
 	@$(NORMAL_UNINSTALL)
-	@list='$(snifd_etc_DATA)'; test -n "$(snifd_etcdir)" || list=; \
+	@list='$(snifd_ca_base_DATA)'; test -n "$(snifd_ca_basedir)" || list=; \
 	files=`for p in $$list; do echo $$p; done | sed -e 's|^.*/||'`; \
-	dir='$(DESTDIR)$(snifd_etcdir)'; $(am__uninstall_files_from_dir)
+	dir='$(DESTDIR)$(snifd_ca_basedir)'; $(am__uninstall_files_from_dir)
+install-snifd_ca_etcDATA: $(snifd_ca_etc_DATA)
+	@$(NORMAL_INSTALL)
+	@list='$(snifd_ca_etc_DATA)'; test -n "$(snifd_ca_etcdir)" || list=; \
+	if test -n "$$list"; then \
+	  echo " $(MKDIR_P) '$(DESTDIR)$(snifd_ca_etcdir)'"; \
+	  $(MKDIR_P) "$(DESTDIR)$(snifd_ca_etcdir)" || exit 1; \
+	fi; \
+	for p in $$list; do \
+	  if test -f "$$p"; then d=; else d="$(srcdir)/"; fi; \
+	  echo "$$d$$p"; \
+	done | $(am__base_list) | \
+	while read files; do \
+	  echo " $(INSTALL_DATA) $$files '$(DESTDIR)$(snifd_ca_etcdir)'"; \
+	  $(INSTALL_DATA) $$files "$(DESTDIR)$(snifd_ca_etcdir)" || exit $$?; \
+	done
 
-ID: $(am__tagged_files)
-	$(am__define_uniq_tagged_files); mkid -fID $$unique
-tags: tags-am
-TAGS: tags
+uninstall-snifd_ca_etcDATA:
+	@$(NORMAL_UNINSTALL)
+	@list='$(snifd_ca_etc_DATA)'; test -n "$(snifd_ca_etcdir)" || list=; \
+	files=`for p in $$list; do echo $$p; done | sed -e 's|^.*/||'`; \
+	dir='$(DESTDIR)$(snifd_ca_etcdir)'; $(am__uninstall_files_from_dir)
+install-snifd_ca_logDATA: $(snifd_ca_log_DATA)
+	@$(NORMAL_INSTALL)
+	@list='$(snifd_ca_log_DATA)'; test -n "$(snifd_ca_logdir)" || list=; \
+	if test -n "$$list"; then \
+	  echo " $(MKDIR_P) '$(DESTDIR)$(snifd_ca_logdir)'"; \
+	  $(MKDIR_P) "$(DESTDIR)$(snifd_ca_logdir)" || exit 1; \
+	fi; \
+	for p in $$list; do \
+	  if test -f "$$p"; then d=; else d="$(srcdir)/"; fi; \
+	  echo "$$d$$p"; \
+	done | $(am__base_list) | \
+	while read files; do \
+	  echo " $(INSTALL_DATA) $$files '$(DESTDIR)$(snifd_ca_logdir)'"; \
+	  $(INSTALL_DATA) $$files "$(DESTDIR)$(snifd_ca_logdir)" || exit $$?; \
+	done
 
-tags-am: $(TAGS_DEPENDENCIES) $(am__tagged_files)
-	set x; \
-	here=`pwd`; \
-	$(am__define_uniq_tagged_files); \
-	shift; \
-	if test -z "$(ETAGS_ARGS)$$*$$unique"; then :; else \
-	  test -n "$$unique" || unique=$$empty_fix; \
-	  if test $$# -gt 0; then \
-	    $(ETAGS) $(ETAGSFLAGS) $(AM_ETAGSFLAGS) $(ETAGS_ARGS) \
-	      "$$@" $$unique; \
-	  else \
-	    $(ETAGS) $(ETAGSFLAGS) $(AM_ETAGSFLAGS) $(ETAGS_ARGS) \
-	      $$unique; \
-	  fi; \
-	fi
-ctags: ctags-am
+uninstall-snifd_ca_logDATA:
+	@$(NORMAL_UNINSTALL)
+	@list='$(snifd_ca_log_DATA)'; test -n "$(snifd_ca_logdir)" || list=; \
+	files=`for p in $$list; do echo $$p; done | sed -e 's|^.*/||'`; \
+	dir='$(DESTDIR)$(snifd_ca_logdir)'; $(am__uninstall_files_from_dir)
+tags TAGS:
 
-CTAGS: ctags
-ctags-am: $(TAGS_DEPENDENCIES) $(am__tagged_files)
-	$(am__define_uniq_tagged_files); \
-	test -z "$(CTAGS_ARGS)$$unique" \
-	  || $(CTAGS) $(CTAGSFLAGS) $(AM_CTAGSFLAGS) $(CTAGS_ARGS) \
-	     $$unique
+ctags CTAGS:
 
-GTAGS:
-	here=`$(am__cd) $(top_builddir) && pwd` \
-	  && $(am__cd) $(top_srcdir) \
-	  && gtags -i $(GTAGS_ARGS) "$$here"
-cscope: cscope.files
-	test ! -s cscope.files \
-	  || $(CSCOPE) -b -q $(AM_CSCOPEFLAGS) $(CSCOPEFLAGS) -i cscope.files $(CSCOPE_ARGS)
-clean-cscope:
-	-rm -f cscope.files
-cscope.files: clean-cscope cscopelist
-cscopelist: cscopelist-am
+cscope cscopelist:
 
-cscopelist-am: $(am__tagged_files)
-	list='$(am__tagged_files)'; \
-	case "$(srcdir)" in \
-	  [\\/]* | ?:[\\/]*) sdir="$(srcdir)" ;; \
-	  *) sdir=$(subdir)/$(srcdir) ;; \
-	esac; \
-	for i in $$list; do \
-	  if test -f "$$i"; then \
-	    echo "$(subdir)/$$i"; \
-	  else \
-	    echo "$$sdir/$$i"; \
-	  fi; \
-	done >> $(top_builddir)/cscope.files
-
-distclean-tags:
-	-rm -f TAGS ID GTAGS GRTAGS GSYMS GPATH tags
-	-rm -f cscope.out cscope.in.out cscope.po.out cscope.files
 
 distdir: $(BUILT_SOURCES)
 	$(MAKE) $(AM_MAKEFLAGS) distdir-am
@@ -857,9 +572,9 @@ distcleancheck: distclean
 	       exit 1; } >&2
 check-am: all-am
 check: check-am
-all-am: Makefile $(PROGRAMS) $(SCRIPTS) $(DATA) config.h
+all-am: Makefile $(SCRIPTS) $(DATA)
 installdirs:
-	for dir in "$(DESTDIR)$(bindir)" "$(DESTDIR)$(bindir)" "$(DESTDIR)$(snifd_etcdir)"; do \
+	for dir in "$(DESTDIR)$(bindir)" "$(DESTDIR)$(snifd_ca_basedir)" "$(DESTDIR)$(snifd_ca_etcdir)" "$(DESTDIR)$(snifd_ca_logdir)"; do \
 	  test -z "$$dir" || $(MKDIR_P) "$$dir"; \
 	done
 install: install-am
@@ -888,41 +603,18 @@ clean-generic:
 distclean-generic:
 	-test -z "$(CONFIG_CLEAN_FILES)" || rm -f $(CONFIG_CLEAN_FILES)
 	-test . = "$(srcdir)" || test -z "$(CONFIG_CLEAN_VPATH_FILES)" || rm -f $(CONFIG_CLEAN_VPATH_FILES)
-	-rm -f lib/$(DEPDIR)/$(am__dirstamp)
-	-rm -f lib/$(am__dirstamp)
-	-rm -f snifd/$(DEPDIR)/$(am__dirstamp)
-	-rm -f snifd/$(am__dirstamp)
 
 maintainer-clean-generic:
 	@echo "This command is intended for maintainers to use"
 	@echo "it deletes files that may require special tools to rebuild."
 clean: clean-am
 
-clean-am: clean-binPROGRAMS clean-generic mostlyclean-am
+clean-am: clean-generic mostlyclean-am
 
 distclean: distclean-am
 	-rm -f $(am__CONFIG_DISTCLEAN_FILES)
-		-rm -f lib/$(DEPDIR)/cert.Po
-	-rm -f lib/$(DEPDIR)/conn.Po
-	-rm -f snifd/$(DEPDIR)/abuse.Po
-	-rm -f snifd/$(DEPDIR)/buf.Po
-	-rm -f snifd/$(DEPDIR)/cln.Po
-	-rm -f snifd/$(DEPDIR)/ctl.Po
-	-rm -f snifd/$(DEPDIR)/fifo.Po
-	-rm -f snifd/$(DEPDIR)/fwd.Po
-	-rm -f snifd/$(DEPDIR)/help.Po
-	-rm -f snifd/$(DEPDIR)/host.Po
-	-rm -f snifd/$(DEPDIR)/jTree.Po
-	-rm -f snifd/$(DEPDIR)/listen.Po
-	-rm -f snifd/$(DEPDIR)/port.Po
-	-rm -f snifd/$(DEPDIR)/snifd.Po
-	-rm -f snifd/$(DEPDIR)/sock.Po
-	-rm -f snifd/$(DEPDIR)/srv.Po
-	-rm -f snifd/$(DEPDIR)/util.Po
-	-rm -f snifd/$(DEPDIR)/watch.Po
 	-rm -f Makefile
-distclean-am: clean-am distclean-compile distclean-generic \
-	distclean-hdr distclean-tags
+distclean-am: clean-am distclean-generic
 
 dvi: dvi-am
 
@@ -936,14 +628,15 @@ info: info-am
 
 info-am:
 
-install-data-am: install-snifd_etcDATA
+install-data-am: install-snifd_ca_baseDATA install-snifd_ca_etcDATA \
+	install-snifd_ca_logDATA
 	@$(NORMAL_INSTALL)
 	$(MAKE) $(AM_MAKEFLAGS) install-data-hook
 install-dvi: install-dvi-am
 
 install-dvi-am:
 
-install-exec-am: install-binPROGRAMS install-binSCRIPTS
+install-exec-am: install-binSCRIPTS
 
 install-html: install-html-am
 
@@ -968,30 +661,12 @@ installcheck-am:
 maintainer-clean: maintainer-clean-am
 	-rm -f $(am__CONFIG_DISTCLEAN_FILES)
 	-rm -rf $(top_srcdir)/autom4te.cache
-		-rm -f lib/$(DEPDIR)/cert.Po
-	-rm -f lib/$(DEPDIR)/conn.Po
-	-rm -f snifd/$(DEPDIR)/abuse.Po
-	-rm -f snifd/$(DEPDIR)/buf.Po
-	-rm -f snifd/$(DEPDIR)/cln.Po
-	-rm -f snifd/$(DEPDIR)/ctl.Po
-	-rm -f snifd/$(DEPDIR)/fifo.Po
-	-rm -f snifd/$(DEPDIR)/fwd.Po
-	-rm -f snifd/$(DEPDIR)/help.Po
-	-rm -f snifd/$(DEPDIR)/host.Po
-	-rm -f snifd/$(DEPDIR)/jTree.Po
-	-rm -f snifd/$(DEPDIR)/listen.Po
-	-rm -f snifd/$(DEPDIR)/port.Po
-	-rm -f snifd/$(DEPDIR)/snifd.Po
-	-rm -f snifd/$(DEPDIR)/sock.Po
-	-rm -f snifd/$(DEPDIR)/srv.Po
-	-rm -f snifd/$(DEPDIR)/util.Po
-	-rm -f snifd/$(DEPDIR)/watch.Po
 	-rm -f Makefile
 maintainer-clean-am: distclean-am maintainer-clean-generic
 
 mostlyclean: mostlyclean-am
 
-mostlyclean-am: mostlyclean-compile mostlyclean-generic
+mostlyclean-am: mostlyclean-generic
 
 pdf: pdf-am
 
@@ -1001,37 +676,54 @@ ps: ps-am
 
 ps-am:
 
-uninstall-am: uninstall-binPROGRAMS uninstall-binSCRIPTS \
-	uninstall-snifd_etcDATA
+uninstall-am: uninstall-binSCRIPTS uninstall-snifd_ca_baseDATA \
+	uninstall-snifd_ca_etcDATA uninstall-snifd_ca_logDATA
 
-.MAKE: all install-am install-data-am install-strip
+.MAKE: install-am install-data-am install-strip
 
-.PHONY: CTAGS GTAGS TAGS all all-am am--depfiles am--refresh check \
-	check-am clean clean-binPROGRAMS clean-cscope clean-generic \
-	cscope cscopelist-am ctags ctags-am dist dist-all dist-bzip2 \
-	dist-gzip dist-lzip dist-shar dist-tarZ dist-xz dist-zip \
-	dist-zstd distcheck distclean distclean-compile \
-	distclean-generic distclean-hdr distclean-tags distcleancheck \
-	distdir distuninstallcheck dvi dvi-am html html-am info \
-	info-am install install-am install-binPROGRAMS \
-	install-binSCRIPTS install-data install-data-am \
-	install-data-hook install-dvi install-dvi-am install-exec \
-	install-exec-am install-html install-html-am install-info \
-	install-info-am install-man install-pdf install-pdf-am \
-	install-ps install-ps-am install-snifd_etcDATA install-strip \
-	installcheck installcheck-am installdirs maintainer-clean \
-	maintainer-clean-generic mostlyclean mostlyclean-compile \
-	mostlyclean-generic pdf pdf-am ps ps-am tags tags-am uninstall \
-	uninstall-am uninstall-binPROGRAMS uninstall-binSCRIPTS \
-	uninstall-snifd_etcDATA
+.PHONY: all all-am am--refresh check check-am clean clean-generic \
+	cscopelist-am ctags-am dist dist-all dist-bzip2 dist-gzip \
+	dist-lzip dist-shar dist-tarZ dist-xz dist-zip dist-zstd \
+	distcheck distclean distclean-generic distcleancheck distdir \
+	distuninstallcheck dvi dvi-am html html-am info info-am \
+	install install-am install-binSCRIPTS install-data \
+	install-data-am install-data-hook install-dvi install-dvi-am \
+	install-exec install-exec-am install-html install-html-am \
+	install-info install-info-am install-man install-pdf \
+	install-pdf-am install-ps install-ps-am \
+	install-snifd_ca_baseDATA install-snifd_ca_etcDATA \
+	install-snifd_ca_logDATA install-strip installcheck \
+	installcheck-am installdirs maintainer-clean \
+	maintainer-clean-generic mostlyclean mostlyclean-generic pdf \
+	pdf-am ps ps-am tags-am uninstall uninstall-am \
+	uninstall-binSCRIPTS uninstall-snifd_ca_baseDATA \
+	uninstall-snifd_ca_etcDATA uninstall-snifd_ca_logDATA
 
 .PRECIOUS: Makefile
 
 
 install-data-hook:
-	useradd snif || true
-	chown snif:snif $(snifd_etcdir)
-	chmod 0770 $(snifd_etcdir)
+	chown snif:snif $(snifd_ca_basedir)
+	chmod 02775 $(snifd_ca_basedir)
+	chown snif:snif $(snifd_ca_etcdir)
+	chmod 02770 $(snifd_ca_etcdir)
+	chown snif:snif $(snifd_ca_logdir)
+	chmod 02770 $(snifd_ca_logdir)
+	cp -Ru inc $(snifd_ca_basedir)/
+	cp -Ru public_html $(snifd_ca_basedir)/
+	cp -Ru secure_html $(snifd_ca_basedir)/
+	[ -L $(snifd_ca_basedir)/etc ] || ln -s $(snifd_ca_etcdir) $(snifd_ca_basedir)/etc
+	[ -L $(snifd_ca_basedir)/log ] || ln -s $(snifd_ca_logdir) $(snifd_ca_basedir)/log
+	[ -d $(snifd_ca_basedir)/csr ] || mkdir -m 02775 $(snifd_ca_basedir)/csr
+	[ -d $(snifd_ca_basedir)/cfg ] || mkdir -m 02775 $(snifd_ca_basedir)/cfg
+	[ -d $(snifd_ca_basedir)/auth ] || mkdir -m 02775 $(snifd_ca_basedir)/auth
+	[ -d $(snifd_ca_basedir)/arc ] || mkdir -m 02755 $(snifd_ca_basedir)/arc
+	[ -d $(snifd_ca_basedir)/var ] || mkdir -m 02755 $(snifd_ca_basedir)/var
+	[ -d $(snifd_ca_basedir)/apns ] || mkdir -m 02775 $(snifd_ca_basedir)/apns
+	[ -p $(snifd_ca_basedir)/var/snif-certd.ctl ] || mkfifo -m 0620 $(snifd_ca_basedir)/var/snif-certd.ctl
+	[ -p $(snifd_ca_basedir)/var/snifd-in.ctl ] || mkfifo -m 0620 $(snifd_ca_basedir)/var/snifd-in.ctl
+	[ -p $(snifd_ca_basedir)/var/snifd-out-apnsd.ctl ] || mkfifo -m 0640 $(snifd_ca_basedir)/var/snifd-out-apnsd.ctl
+	chown -R snif $(snifd_ca_basedir)
 	[ -d /lib/systemd/system ] && cp etc/systemd/* /lib/systemd/system || true
 
 # Tell versions [3.59,3.63) of GNU make to not export all variables.

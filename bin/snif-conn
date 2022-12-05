@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/bin/sh
 
 #/**************************************************************************
 # *     _________
@@ -22,17 +22,20 @@
 # *
 # **************************************************************************/
 
-. /etc/snif.conf
-BaseDir=$SNIF_CA_PROXY
-CertDir="$BaseDir/crt"
-ArcDir="$BaseDir/arc"
+. /etc/snif/snif.conf
 
-mkdir -m 0775 $ArcDir 2> /dev/null
+SNIF_ARGS="-c ${SNIF_CONN_CRT} -k ${SNIF_CONN_KEY} -a ${SNIF_CONN_INITURL}"
 
-ArcDay=$ArcDir/`date +%Y%m%d`
+if [ x$1 == "x-d" ]
+then
+    for p in ${SNIF_CONN_PORTS}
+    do
+	[ "x$p" != "x" ] && SNIF_ARGS="${SNIF_ARGS} $p"
+    done
+else
+    echo "Use $0 -d to run the SNIF Connector daemon"
+fi
 
-mkdir -m 0775 $ArcDay 2> /dev/null
-
-find $CertDir/ -name "*.crt" -mtime +75 -exec mv \{\} $ArcDay/ \;
-
-rmdir --ignore-fail-on-non-empty $ArcDay
+SNIF_BIN=`dirname $0`/snifd
+[ ! -x ${SNIF_BIN} ] && SNIF_BIN=snifd
+exec ${SNIF_BIN} $@ ${SNIF_ARGS}

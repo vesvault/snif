@@ -28,7 +28,7 @@ use Crypt::LE;
 # HTTP verification are being issued
 use Net::DNS;
 
-$BaseDir = "/home/snif";
+$BaseDir = `. /etc/snif.conf; echo -n \$SNIF_CA_PROXY;`;
 
 $WWWdir = "$BaseDir/public_html";
 $CSRdir = "$BaseDir/csr";
@@ -37,7 +37,7 @@ $EtcDir = "$BaseDir/etc";
 $LogDir = "$BaseDir/log";
 $CtlFifo = "$BaseDir/var/snif-certd.ctl";
 $Live = 1;
-$UserAgent = "snif-certd/0.9 (https://snif.host)";
+$UserAgent = "snif-certd/0.95 (https://snif.host)";
 
 sub dlog {
     my ($log, $msg) = @_;

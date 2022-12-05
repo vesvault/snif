@@ -1,0 +1,10 @@
+[Unit]
+Description=SNIF CA Proxy
+
+[Service]
+User=snif
+Group=snif
+ExecStart=/usr/bin/snif-certd
+
+[Install]
+WantedBy=multi-user.target

@@ -38,6 +38,16 @@ snifd/jTree.h \
 snifd/help.h
 
 bin_PROGRAMS = snifd/snifd
+bin_SCRIPTS = bin/snif-conn
 snifd_snifd_LDADD = -lcrypto -lcurl -lssl
 
 snifd_snifd_SOURCES = $(LIB_CFILES) $(SNIFD_CFILES) $(LIB_HFILES) $(SNIFD_HFILES)
+
+snifd_etcdir = /etc/snif
+snifd_etc_DATA = etc/snif.conf
+
+install-data-hook:
+	useradd snif || true
+	chown snif:snif $(snifd_etcdir)
+	chmod 0770 $(snifd_etcdir)
+	[ -d /lib/systemd/system ] && cp etc/systemd/* /lib/systemd/system || true

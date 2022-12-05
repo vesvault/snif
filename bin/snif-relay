@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/bin/sh
 
 #/**************************************************************************
 # *     _________
@@ -22,17 +22,32 @@
 # *
 # **************************************************************************/
 
-. /etc/snif.conf
-BaseDir=$SNIF_CA_PROXY
-CertDir="$BaseDir/crt"
-ArcDir="$BaseDir/arc"
+. /etc/snif/snif.conf
 
-mkdir -m 0775 $ArcDir 2> /dev/null
+if [ ! -d ${SNIF_CA_PROXY} ]
+then
+    echo "Directory does not exist: ${SNIF_CA_PROXY}" >&2
+    exit 1
+fi
 
-ArcDay=$ArcDir/`date +%Y%m%d`
+SNIF_ARGS=""
 
-mkdir -m 0775 $ArcDay 2> /dev/null
+[ x${SNIF_RELAY_BIND} != "x" ] && SNIF_ARGS="${SNIF_ARGS} -s ${SNIF_RELAY_BIND}"
 
-find $CertDir/ -name "*.crt" -mtime +75 -exec mv \{\} $ArcDay/ \;
+[ x${SNIF_RELAY_ABUSE} != "x" ] && SNIF_ARGS="${SNIF_ARGS} -t ${SNIF_RELAY_ABUSE}"
 
-rmdir --ignore-fail-on-non-empty $ArcDay
+for f in ${SNIF_CA_PROXY}/var/snifd-out*.ctl
+do
+    [ -e $f ] && SNIF_ARGS="${SNIF_ARGS} -p $f"
+done
+
+for f in ${SNIF_CA_PROXY}/var/snifd-in*.ctl
+do
+    [ -e $f ] && SNIF_ARGS="${SNIF_ARGS} -i $f"
+done
+
+SNIF_ARGS="${SNIF_ARGS} ${SNIF_RELAY_PORTS}"
+
+SNIF_BIN=`dirname $0`/snifd
+[ ! -x ${SNIF_BIN} ] && SNIF_BIN=snifd
+exec ${SNIF_BIN} $@ ${SNIF_ARGS}
