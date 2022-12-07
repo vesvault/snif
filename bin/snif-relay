@@ -32,7 +32,7 @@ fi
 
 SNIF_ARGS=""
 
-[ x${SNIF_RELAY_BIND} != "x" ] && SNIF_ARGS="${SNIF_ARGS} -s ${SNIF_RELAY_BIND}"
+[ x${SNIF_RELAY_SRV} != "x" ] && SNIF_ARGS="${SNIF_ARGS} -s ${SNIF_RELAY_SRV}"
 
 [ x${SNIF_RELAY_ABUSE} != "x" ] && SNIF_ARGS="${SNIF_ARGS} -t ${SNIF_RELAY_ABUSE}"
 
