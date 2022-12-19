@@ -26,7 +26,7 @@
 
 SNIF_ARGS="-c ${SNIF_CONN_CRT} -k ${SNIF_CONN_KEY} -a ${SNIF_CONN_INITURL}"
 
-if [ x$1 == "x-d" ]
+if [ x$1 = "x-d" ]
 then
     for p in ${SNIF_CONN_PORTS}
     do
