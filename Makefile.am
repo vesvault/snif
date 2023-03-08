@@ -47,7 +47,7 @@ snifd_etcdir = /etc/snif
 snifd_etc_DATA = etc/snif.conf
 
 install-data-hook:
-	useradd snif || true
+	useradd -U snif || true
 	chown snif:snif $(snifd_etcdir)
-	chmod 0770 $(snifd_etcdir)
+	chmod 02750 $(snifd_etcdir)
 	[ -d /lib/systemd/system ] && cp etc/systemd/* /lib/systemd/system || true

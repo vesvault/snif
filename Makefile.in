@@ -1029,9 +1029,9 @@ uninstall-am: uninstall-binPROGRAMS uninstall-binSCRIPTS \
 
 
 install-data-hook:
-	useradd snif || true
+	useradd -U snif || true
 	chown snif:snif $(snifd_etcdir)
-	chmod 0770 $(snifd_etcdir)
+	chmod 02750 $(snifd_etcdir)
 	[ -d /lib/systemd/system ] && cp etc/systemd/* /lib/systemd/system || true
 
 # Tell versions [3.59,3.63) of GNU make to not export all variables.

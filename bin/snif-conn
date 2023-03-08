@@ -24,18 +24,38 @@
 
 . /etc/snif/snif.conf
 
+if [ -e ${SNIF_CONN_CRT} ]
+then
+    [ -w ${SNIF_CONN_CRT} -o "x$1" = "x-q" ] || echo Warning: SNIF cert ${SNIF_CONN_CRT} is not writable for ${USER}, renewal in this process WILL FAIL >&2
+elif [ ! -d ${SNIF_CONN_DIR} ]
+then
+    echo Error: SNIF dir ${SNIF_CONN_DIR} does not exist >&2
+    exit 1
+elif [ ! -O ${SNIF_CONN_DIR} ]
+then
+    echo Wrong uid for cert file creation, trying sudo... >&2
+    [ "x${SNIF_USER}" = "x" ] && SNIF_USER=`stat -c %U ${SNIF_CONN_DIR}`
+    exec sudo -u ${SNIF_USER} "$0" "$@"
+    echo ... failed, exitcode=$? >&2
+    exit 1
+fi
+
 SNIF_ARGS="-c ${SNIF_CONN_CRT} -k ${SNIF_CONN_KEY} -a ${SNIF_CONN_INITURL}"
 
-if [ x$1 = "x-d" ]
+if [ "x$1" = "x-d" ]
 then
+    SNIF_ARGS="${SNIF_ARGS} -d"
     for p in ${SNIF_CONN_PORTS}
     do
 	[ "x$p" != "x" ] && SNIF_ARGS="${SNIF_ARGS} $p"
     done
-else
-    echo "Use $0 -d to run the SNIF Connector daemon"
+elif [ "x$1" != "x-q" ]
+then
+    echo "(Use $0 -d to run the SNIF Connector daemon, -q to silence notices)"
+    echo "Allocated hostname for this SNIF connector:"
 fi
 
 SNIF_BIN=`dirname $0`/snifd
 [ ! -x ${SNIF_BIN} ] && SNIF_BIN=snifd
-exec ${SNIF_BIN} $@ ${SNIF_ARGS}
+umask 0027
+exec ${SNIF_BIN} ${SNIF_ARGS}

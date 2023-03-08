@@ -3,7 +3,7 @@
 
 
 AC_PREREQ([2.69])
-AC_INIT([snif], [0.95], [bugs@vesvault.com])
+AC_INIT([snif], [0.96], [bugs@vesvault.com])
 AC_CONFIG_SRCDIR([snifd/snifd.c])
 AC_CONFIG_HEADERS([config.h])
 
