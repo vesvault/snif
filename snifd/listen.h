@@ -44,6 +44,9 @@ typedef struct snif_listen {
     struct snif_sock *input;
     struct snif_sock *watch;
     char shutdn;
+#ifdef SNIF_DIAGS
+    long long ctpolls;
+#endif
 } snif_listen;
 
 #define	SNIF_LISTEN_TMOUT	900

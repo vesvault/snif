@@ -41,8 +41,7 @@ void snif_port_free(snif_sock *sock) {
 void snif_port_pollfn(snif_sock *sock, struct pollfd *pollfd) {
     if (!pollfd) return snif_port_free(sock);
     if (pollfd->fd < 0) {
-	pollfd->fd = sock->fd;
-	pollfd->events = POLLIN | POLLPRI | POLLERR | POLLHUP;
+	snif_sock_setpoll(sock, pollfd, POLLIN | POLLPRI | POLLHUP | POLLERR);
 	return;
     }
     if (pollfd->revents & POLLIN) {

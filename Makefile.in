@@ -15,7 +15,6 @@
 @SET_MAKE@
 
 
-
 VPATH = @srcdir@
 am__is_gnu_make = { \
   if test -z '$(MAKELEVEL)'; then \
@@ -102,8 +101,7 @@ mkinstalldirs = $(install_sh) -d
 CONFIG_HEADER = config.h
 CONFIG_CLEAN_FILES =
 CONFIG_CLEAN_VPATH_FILES =
-am__installdirs = "$(DESTDIR)$(bindir)" "$(DESTDIR)$(bindir)" \
-	"$(DESTDIR)$(snifd_etcdir)"
+am__installdirs = "$(DESTDIR)$(bindir)" "$(DESTDIR)$(bindir)"
 PROGRAMS = $(bin_PROGRAMS)
 am__dirstamp = $(am__leading_dot)dirstamp
 am__objects_1 = lib/cert.$(OBJEXT) lib/conn.$(OBJEXT)
@@ -191,7 +189,6 @@ am__can_run_installinfo = \
     n|no|NO) false;; \
     *) (install-info --version) >/dev/null 2>&1;; \
   esac
-DATA = $(snifd_etc_DATA)
 am__tagged_files = $(HEADERS) $(SOURCES) $(TAGS_FILES) $(LISP) \
 	config.h.in
 # Read a list of newline-separated strings from the standard input,
@@ -372,7 +369,6 @@ bin_SCRIPTS = bin/snif-conn
 snifd_snifd_LDADD = -lcrypto -lcurl -lssl
 snifd_snifd_SOURCES = $(LIB_CFILES) $(SNIFD_CFILES) $(LIB_HFILES) $(SNIFD_HFILES)
 snifd_etcdir = /etc/snif
-snifd_etc_DATA = etc/snif.conf
 all: config.h
 	$(MAKE) $(AM_MAKEFLAGS) all-am
 
@@ -602,27 +598,6 @@ am--depfiles: $(am__depfiles_remade)
 @AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='$<' object='$@' libtool=no @AMDEPBACKSLASH@
 @AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
 @am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(COMPILE) -c -o $@ `$(CYGPATH_W) '$<'`
-install-snifd_etcDATA: $(snifd_etc_DATA)
-	@$(NORMAL_INSTALL)
-	@list='$(snifd_etc_DATA)'; test -n "$(snifd_etcdir)" || list=; \
-	if test -n "$$list"; then \
-	  echo " $(MKDIR_P) '$(DESTDIR)$(snifd_etcdir)'"; \
-	  $(MKDIR_P) "$(DESTDIR)$(snifd_etcdir)" || exit 1; \
-	fi; \
-	for p in $$list; do \
-	  if test -f "$$p"; then d=; else d="$(srcdir)/"; fi; \
-	  echo "$$d$$p"; \
-	done | $(am__base_list) | \
-	while read files; do \
-	  echo " $(INSTALL_DATA) $$files '$(DESTDIR)$(snifd_etcdir)'"; \
-	  $(INSTALL_DATA) $$files "$(DESTDIR)$(snifd_etcdir)" || exit $$?; \
-	done
-
-uninstall-snifd_etcDATA:
-	@$(NORMAL_UNINSTALL)
-	@list='$(snifd_etc_DATA)'; test -n "$(snifd_etcdir)" || list=; \
-	files=`for p in $$list; do echo $$p; done | sed -e 's|^.*/||'`; \
-	dir='$(DESTDIR)$(snifd_etcdir)'; $(am__uninstall_files_from_dir)
 
 ID: $(am__tagged_files)
 	$(am__define_uniq_tagged_files); mkid -fID $$unique
@@ -857,9 +832,9 @@ distcleancheck: distclean
 	       exit 1; } >&2
 check-am: all-am
 check: check-am
-all-am: Makefile $(PROGRAMS) $(SCRIPTS) $(DATA) config.h
+all-am: Makefile $(PROGRAMS) $(SCRIPTS) config.h
 installdirs:
-	for dir in "$(DESTDIR)$(bindir)" "$(DESTDIR)$(bindir)" "$(DESTDIR)$(snifd_etcdir)"; do \
+	for dir in "$(DESTDIR)$(bindir)" "$(DESTDIR)$(bindir)"; do \
 	  test -z "$$dir" || $(MKDIR_P) "$$dir"; \
 	done
 install: install-am
@@ -936,7 +911,7 @@ info: info-am
 
 info-am:
 
-install-data-am: install-snifd_etcDATA
+install-data-am:
 	@$(NORMAL_INSTALL)
 	$(MAKE) $(AM_MAKEFLAGS) install-data-hook
 install-dvi: install-dvi-am
@@ -1001,8 +976,7 @@ ps: ps-am
 
 ps-am:
 
-uninstall-am: uninstall-binPROGRAMS uninstall-binSCRIPTS \
-	uninstall-snifd_etcDATA
+uninstall-am: uninstall-binPROGRAMS uninstall-binSCRIPTS
 
 .MAKE: all install-am install-data-am install-strip
 
@@ -1018,20 +992,18 @@ uninstall-am: uninstall-binPROGRAMS uninstall-binSCRIPTS \
 	install-data-hook install-dvi install-dvi-am install-exec \
 	install-exec-am install-html install-html-am install-info \
 	install-info-am install-man install-pdf install-pdf-am \
-	install-ps install-ps-am install-snifd_etcDATA install-strip \
-	installcheck installcheck-am installdirs maintainer-clean \
+	install-ps install-ps-am install-strip installcheck \
+	installcheck-am installdirs maintainer-clean \
 	maintainer-clean-generic mostlyclean mostlyclean-compile \
 	mostlyclean-generic pdf pdf-am ps ps-am tags tags-am uninstall \
-	uninstall-am uninstall-binPROGRAMS uninstall-binSCRIPTS \
-	uninstall-snifd_etcDATA
+	uninstall-am uninstall-binPROGRAMS uninstall-binSCRIPTS
 
 .PRECIOUS: Makefile
 
 
 install-data-hook:
-	useradd -U snif || true
-	chown snif:snif $(snifd_etcdir)
-	chmod 02750 $(snifd_etcdir)
+	[ -d $(snifd_etcdir) ] || ( ( useradd -U snif || true ) && mkdir -m 02750 $(snifd_etcdir) && chown snif:snif $(snifd_etcdir) )
+	cp -n etc/snif.conf $(snifd_etcdir)/
 	[ -d /lib/systemd/system ] && cp etc/systemd/* /lib/systemd/system || true
 
 # Tell versions [3.59,3.63) of GNU make to not export all variables.

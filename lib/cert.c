@@ -86,6 +86,7 @@ size_t snif_cert_curlhdrfn(void *ptr, size_t size, size_t nmemb, void *stream) {
 	if (pval && !*pval) {
 	    while (v + 1 < tail) if (*++v != ' ') break;
 	    *pval = d = malloc(tail - v + 1);
+	    if (!d) return 0;
 	    while (v < tail) {
 		char c = *v++;
 		switch (c) {
@@ -184,30 +185,37 @@ const char *snif_cert_hostname(snif_cert *cert) {
 	    if (!pkey) return NULL;
 	    unsigned char hash[16];
 	    char *h = malloc(strlen(cert->cn) + 16);
+	    if (!h) return NULL;
 	    cert->hostname = h;
 	    *h++ = 'r';
 	    EVP_MD_CTX *mdctx = EVP_MD_CTX_create();
 	    unsigned int mdlen = sizeof(hash);
+	    char ok = 0;
 	    if (EVP_DigestInit_ex(mdctx, EVP_md5(), NULL) > 0) {
 		int l = i2d_PrivateKey(pkey, NULL);
 		if (l > 0) {
 		    unsigned char *buf = malloc(l);
 		    unsigned char *d = buf;
-		    if (i2d_PrivateKey(pkey, &d) > 0) {
-			EVP_DigestUpdate(mdctx, buf, l);
+		    if (d && i2d_PrivateKey(pkey, &d) > 0 && EVP_DigestUpdate(mdctx, buf, l) > 0 && EVP_DigestFinal_ex(mdctx, hash, &mdlen) > 0) {
+			if (cert->flags & SNIF_F_LEGACY) sprintf(h, "%08lx%04hx", *((unsigned long *)hash), *((unsigned short *)(hash + 4)));
+			else sprintf(h, "%02hhx%02hhx%02hhx%02hhx%02hhx%02hhx", hash[0], hash[1], hash[2], hash[3], hash[4], hash[5]);
+			h += 12;
+			ok = 1;
 		    }
 		    free(buf);
 		}
-		if (EVP_DigestFinal_ex(mdctx, hash, &mdlen) > 0) {
-		    sprintf(h, "%08lx%04hx", *((unsigned long *)hash), *((unsigned short *)(hash + 4)));
-		    h += 12;
-		}
 	    }
 	    EVP_MD_CTX_destroy(mdctx);
+	    if (!ok) return free(cert->hostname), cert->hostname = NULL;
 	    strcpy(h, cert->cn + 1);
 	} else cert->hostname = cert->cn;
     }
     return cert->hostname;
+}
+
+const char *snif_cert_sethostname(snif_cert *cert, const char *host) {
+    free(cert->hostname);
+    return cert->hostname = host ? strdup(host) : NULL;
 }
 
 int snif_cert_setsubj(snif_cert *cert, X509_NAME *subj) {
@@ -221,11 +229,22 @@ int snif_cert_setsubj(snif_cert *cert, X509_NAME *subj) {
 #define	snif_cert_bio(cert, file, wr)	((cert)->biofn ? (cert)->biofn(file, wr) : BIO_new_file(file, (wr ? "w" : "r")))
 #define	snif_cert_TLSERR(cert)		((cert)->tlserr.line = __LINE__, (cert)->tlserr.code = ERR_get_error())
 
+#if	(OPENSSL_VERSION_NUMBER >= 0x10100000L)
+#define	snif_cert_sslmethod()		TLS_server_method()
+#else
+#define	snif_cert_sslmethod()		TLSv1_2_server_method()
+#endif
+
 int snif_cert_verify_chain(snif_cert *cert, BIO *in) {
     X509 *crt = PEM_read_bio_X509(in, NULL, NULL, NULL);
     if (!crt) return (snif_cert_TLSERR(cert), 0);
     X509_STORE_CTX *sctx = X509_STORE_CTX_new();
     STACK_OF(X509) *ca = sk_X509_new_null();
+    SSL_CTX *ctx = SSL_CTX_new(snif_cert_sslmethod());
+    if (ctx && SSL_CTX_use_certificate(ctx, crt) <= 0) {
+	SSL_CTX_free(ctx);
+	ctx = NULL;
+    }
     X509 *ccrt;
     while (1) {
 	ccrt = PEM_read_bio_X509(in, NULL, NULL, NULL);
@@ -234,13 +253,17 @@ int snif_cert_verify_chain(snif_cert *cert, BIO *in) {
 	    break;
 	}
 	sk_X509_push(ca, ccrt);
+	if (ctx && SSL_CTX_add_extra_chain_cert(ctx, ccrt) <= 0) {
+	    SSL_CTX_free(ctx);
+	    ctx = NULL;
+	}
     }
     int vrfy = X509_STORE_CTX_init(sctx, cert->rootstore, crt, ca) > 0 ? X509_verify_cert(sctx) : 0;
     cert->tlserr.ctxcode = X509_STORE_CTX_get_error(sctx);
     cert->tlserr.ctxdepth = X509_STORE_CTX_get_error_depth(sctx);
     X509_STORE_CTX_cleanup(sctx);
     X509_STORE_CTX_free(sctx);
-    while ((ccrt = sk_X509_pop(ca))) X509_free(ccrt);
+//    while ((ccrt = sk_X509_pop(ca))) X509_free(ccrt);
     sk_X509_free(ca);
     if (vrfy > 0) vrfy = X509_check_private_key(crt, snif_cert_pkey(cert));
     else snif_cert_TLSERR(cert);
@@ -256,8 +279,12 @@ int snif_cert_verify_chain(snif_cert *cert, BIO *in) {
 	time_t exp = snif_cert_asn1time(X509_get_notAfter(crt));
 #endif
 	if (exp - SNIF_CERT_REFRESH <= time(NULL)) vrfy = (snif_cert_TLSERR(cert), 0);
+	if (cert->dl_ctx) SSL_CTX_free(cert->dl_ctx);
+	cert->dl_ctx = ctx;
+	ctx = NULL;
     }
     X509_free(crt);
+    if (ctx) SSL_CTX_free(ctx);
     return vrfy;
 }
 
@@ -284,6 +311,12 @@ const char *snif_cert_alloccn(snif_cert *cert) {
     return cert->cn = NULL;
 }
 
+void snif_cert_apiurl(snif_cert *cert, char *buf, const char *suf) {
+    const char *bn = snif_cert_basecn(cert);
+    sprintf(buf, "http://%s/snif-cert/%s.crt", bn, bn);
+    sprintf(buf, (cert->apiurl ? "%s%s%s" : "http://%s/snif-cert/%s%s"), (cert->apiurl ? cert->apiurl : bn), bn, suf);
+}
+
 int snif_cert_sendreq(snif_cert *cert, X509_REQ *req) {
     BIO *bio = BIO_new(BIO_s_mem());
     if (PEM_write_bio_X509_REQ(bio, req) <= 0) {
@@ -294,8 +327,7 @@ int snif_cert_sendreq(snif_cert *cert, X509_REQ *req) {
     up.len = BIO_get_mem_data(bio, &up.buf);
     struct CURL *curl = snif_cert_curlfn(cert);
     char buf[1024];
-    const char *bn = snif_cert_basecn(cert);
-    sprintf(buf, "http://%s/snif-cert/%s.csr", bn, bn);
+    snif_cert_apiurl(cert, buf, ".csr");
     curl_easy_setopt(curl, CURLOPT_URL, buf);
     struct curl_slist *hdrs = curl_slist_append(NULL, snif_cert_curlua(cert, buf));
     curl_easy_setopt(curl, CURLOPT_UPLOAD, 1);
@@ -322,36 +354,60 @@ int snif_cert_sendreq(snif_cert *cert, X509_REQ *req) {
 }
 
 
-snif_cert *snif_cert_init(snif_cert *cert) {
+snif_cert *snif_cert_init_ex(snif_cert *cert, int flags) {
     if (!cert) {
 	cert = malloc(sizeof(snif_cert));
-	cert->certfile = cert->pkeyfile = cert->passphrase = cert->initurl = NULL;
+	if (!cert) return NULL;
+	cert->certfile = cert->pkeyfile = cert->passphrase = cert->initurl = cert->apiurl = NULL;
 	cert->rootstore = NULL;
 	cert->biofn = NULL;
 	cert->ctxfn = NULL;
     }
-    cert->ctx = NULL;
+    cert->ctx = cert->dl_ctx = NULL;
     cert->ssl = NULL;
     cert->pkey = NULL;
     cert->cn = cert->hostname = cert->authurl = NULL;
     cert->download_at = 0;
     cert->error = 0;
-    if (!cert->rootstore) {
-	cert->rootstore = X509_STORE_new();
+    cert->flags = flags;
+    if (cert->rootstore) cert->alloc_rootstore = NULL;
+    else {
+	cert->rootstore = cert->alloc_rootstore = X509_STORE_new();
 	X509_STORE_set_default_paths(cert->rootstore);
     }
 #ifdef SNIF_CERT_DIAGS
     cert->tlserr.line = 0;
     cert->tlserr.code = 0;
 #endif
+    cert->unsaved = NULL;
     return cert;
+}
+
+int snif_cert_savecrt(snif_cert *cert) {
+    if (!cert->unsaved) return 0;
+    BIO *bio = snif_cert_bio(cert, cert->certfile, 1);
+    if (!bio) return cert->error = SNIF_CE_IO;
+    const char *s = cert->unsaved->buf;
+    const char *tail = s + cert->unsaved->len;
+    int w = 0;
+    while (s < tail) {
+	w = BIO_write(bio, s, tail - s);
+	if (w < 0) break;
+	s += w;
+    }
+    BIO_free(bio);
+    if (w < 0) return cert->error = SNIF_CE_IO;
+    free(cert->unsaved);
+    cert->unsaved = NULL;
+    return w;
 }
 
 int snif_cert_download(snif_cert *cert) {
     char buf[1024];
     struct CURL *curl = snif_cert_curlfn(cert);
-    const char *bn = snif_cert_basecn(cert);
-    sprintf(buf, "http://%s/snif-cert/%s.crt", bn, bn);
+    struct snif_cert_buf *cbuf = malloc(sizeof(struct snif_cert_buf));
+    if (!cbuf) return SNIF_CE_LIB;
+    snif_cert_apiurl(cert, buf, ".crt");
     curl_easy_setopt(curl, CURLOPT_URL, buf);
     struct curl_slist *hdrs = curl_slist_append(NULL, "Accept: application/x-x509-ca-cert, application/pkix-cert");
     hdrs = curl_slist_append(hdrs, snif_cert_curlua(cert, buf));
@@ -365,7 +421,6 @@ int snif_cert_download(snif_cert *cert) {
     curl_easy_setopt(curl, CURLOPT_HTTPHEADER, hdrs);
     curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, &snif_cert_curlhdrfn);
     curl_easy_setopt(curl, CURLOPT_HEADERDATA, cert);
-    struct snif_cert_buf *cbuf = malloc(sizeof(struct snif_cert_buf));
     cbuf->len = 0;
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, &snif_cert_curldlfn);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, cbuf);
@@ -384,28 +439,10 @@ int snif_cert_download(snif_cert *cert) {
 	    BIO *bio = BIO_new_mem_buf(cbuf->buf, cbuf->len);
 	    rs = snif_cert_verify_chain(cert, bio);
 	    BIO_free(bio);
-	    int retry = 5;
-	    while (rs > 0) {
-		bio = snif_cert_bio(cert, cert->certfile, 1);
-		if (bio) {
-		    const char *s = cbuf->buf;
-		    const char *tail = s + cbuf->len;
-		    int w = 0;
-		    while (s < tail) {
-			w = BIO_write(bio, s, tail - s);
-			if (w < 0) break;
-			s += w;
-		    }
-		    BIO_free(bio);
-		    if (w >= 0) break;
-		    if (retry-- <= 0) {
-			rs = 0;
-			cert->error = SNIF_CE_IO;
-		    }
-		} else {
-		    rs = 0;
-		    cert->error = SNIF_CE_IO;
-		}
+	    if (rs > 0) {
+		free(cert->unsaved);
+		cert->unsaved = realloc(cbuf, offsetof(struct snif_cert_buf, buf) + cbuf->len);
+		cbuf = NULL;
 	    }
 	} else {
 	    switch (code) {
@@ -425,6 +462,7 @@ int snif_cert_download(snif_cert *cert) {
     }
     free(cbuf);
     if (rs <= 0) cert->download_at = time(NULL) + (cert->ctx ? SNIF_CERT_RECHECK : SNIF_CERT_RETRY);
+    snif_cert_savecrt(cert);
     return rs;
 }
 
@@ -502,7 +540,8 @@ void *snif_cert_pkey(snif_cert *cert) {
 }
 
 void *snif_cert_ctx(snif_cert *cert) {
-    if (cert->ctx && time(NULL) >= cert->download_at && snif_cert_download(cert) > 0) {
+    snif_cert_savecrt(cert);
+    if (cert->cn && time(NULL) >= cert->download_at && snif_cert_download(cert) > 0) {
 	SSL_CTX_free(cert->ctx);
 	cert->ctx = NULL;
     }
@@ -511,15 +550,12 @@ void *snif_cert_ctx(snif_cert *cert) {
 	const char *au = cert->authurl;
 	EVP_PKEY *pkey = snif_cert_pkey(cert);
 	if (!pkey || (!au && cert->authurl)) return NULL;
-#if	(OPENSSL_VERSION_NUMBER >= 0x10100000L)
-	const SSL_METHOD *method = TLS_server_method();
-#else
-	const SSL_METHOD *method = TLSv1_2_server_method();
-#endif
-	SSL_CTX *ctx = SSL_CTX_new(method);
+	SSL_CTX *ctx = cert->dl_ctx;
+	cert->dl_ctx = NULL;
+	if (!ctx) ctx = SSL_CTX_new(snif_cert_sslmethod());
 	SSL *ssl;
 	if (SSL_CTX_use_PrivateKey(ctx, pkey) <= 0
-	    || SSL_CTX_use_certificate_chain_file(ctx, cert->certfile) <= 0
+	    || (!SSL_CTX_get0_certificate(ctx) && SSL_CTX_use_certificate_chain_file(ctx, cert->certfile) <= 0)
 	    || SSL_CTX_check_private_key(ctx) <= 0
 	    || !(ssl = SSL_new(ctx))
 	) {
@@ -528,15 +564,17 @@ void *snif_cert_ctx(snif_cert *cert) {
 	    return NULL;
 	}
 	X509 *crt = SSL_get_certificate(ssl);
+	const char *cn = NULL;
 	if (crt && !cert->cn) {
 	    int cl;
-	    const char *cn = snif_cert_getcn(crt, &cl);
+	    cn = snif_cert_getcn(crt, &cl);
 	    if (cn) {
-		memcpy((cert->cn = malloc(cl + 1)), cn, cl);
-		cert->cn[cl] = 0;
+		if ((cert->cn = malloc(cl + 1))) {
+		    memcpy(cert->cn, cn, cl);
+		    cert->cn[cl] = 0;
+		} else cn = NULL;
 	    } else {
 		crt = NULL;
-		cert->error = SNIF_CE_CERT;
 	    }
 	}
 	if (!crt) {
@@ -550,14 +588,12 @@ void *snif_cert_ctx(snif_cert *cert) {
 #else
 	time_t exp = snif_cert_asn1time(X509_get_notAfter(crt));
 #endif
-	time_t t = time(NULL);
 	cert->download_at = exp - SNIF_CERT_REFRESH;
-	int dl = t >= cert->download_at ? snif_cert_download(cert) : 0;
-	int expd = exp < t + SNIF_CERT_EXPIRE;
-	if (expd) {
+	time_t t = time(NULL);
+	if (exp < t + SNIF_CERT_EXPIRE) {
 	    SSL_free(ssl);
 	    SSL_CTX_free(ctx);
-	    return dl > 0 ? snif_cert_ctx(cert) : NULL;
+	    return cn ? snif_cert_ctx(cert) : NULL;
 	}
 	cert->ctx = ctx;
 	if (cert->ssl) SSL_free(cert->ssl);
@@ -575,10 +611,10 @@ void *snif_cert_ssl(snif_cert *cert) {
 }
 
 void snif_cert_idle(snif_cert *cert) {
+    snif_cert_savecrt(cert);
     if (cert->cn && time(NULL) >= cert->download_at && snif_cert_download(cert) > 0) {
-	if (cert->ctx) SSL_CTX_free(cert->ctx);
+	SSL_CTX_free(cert->ctx);
 	cert->ctx = NULL;
-	snif_cert_ctx(cert);
     }
 }
 
@@ -587,6 +623,8 @@ void snif_cert_reset(snif_cert *cert) {
     cert->pkey = NULL;
     if (cert->ctx) SSL_CTX_free(cert->ctx);
     cert->ctx = NULL;
+    if (cert->dl_ctx) SSL_CTX_free(cert->dl_ctx);
+    cert->dl_ctx = NULL;
     if (cert->ssl) SSL_free(cert->ssl);
     cert->ssl = NULL;
     if (cert->hostname != cert->cn) free(cert->hostname);
@@ -594,6 +632,10 @@ void snif_cert_reset(snif_cert *cert) {
     cert->cn = cert->hostname = NULL;
     free(cert->authurl);
     cert->authurl = NULL;
+    free(cert->unsaved);
+    cert->unsaved = NULL;
+    if (cert->alloc_rootstore) X509_STORE_free(cert->alloc_rootstore);
+    cert->alloc_rootstore = NULL;
 }
 
 const char *snif_cert_getcn(void *x509, int *plen) {

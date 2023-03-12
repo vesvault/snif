@@ -26,15 +26,19 @@ typedef struct snif_cert {
     const char *pkeyfile;
     const char *passphrase;
     const char *initurl;
+    const char *apiurl;
     const char *ou;
+    int flags;
     void *(* biofn)(const char *fname, int wr);
     void (* ctxfn)(void *sslctx);
     void *rootstore;
+    void *alloc_rootstore;
     char *authurl;
     char *cn;
     char *hostname;
     void *pkey;
     void *ctx;
+    void *dl_ctx;
     void *ssl;
     long long int download_at;
     int error;
@@ -44,11 +48,20 @@ typedef struct snif_cert {
 	short int ctxcode;
 	short int ctxdepth;
     } tlserr;
+    struct snif_cert_buf *unsaved;
 } snif_cert;
 
+#define	SNIF_F_LEGACY		0x0001
+
+#ifndef	SNIF_CERT_RSA_BITS
 #define	SNIF_CERT_RSA_BITS	4096
+#endif
+#ifndef	SNIF_CERT_SUBJ_O
 #define	SNIF_CERT_SUBJ_O	"SNIF-relay-local-cert"
+#endif
+#ifndef	SNIF_CERT_MAXSIZE
 #define	SNIF_CERT_MAXSIZE	32768
+#endif
 
 #define	SNIF_CE_API	-1
 #define	SNIF_CE_IO	-2
@@ -76,8 +89,10 @@ typedef struct snif_cert {
 	+ (tm)->tm_mday - 672 - ((tm)->tm_year - ((tm)->tm_mon >= 2 ? 0 : 1)) / 100 * 3 / 4)\
 	* 24 + (tm)->tm_hour) * 60 + (tm)->tm_min) * 60 + (tm)->tm_sec)
 
-struct snif_cert *snif_cert_init(struct snif_cert *cert);
+#define	snif_cert_init(cert)	snif_cert_init_ex(cert, SNIF_F_LEGACY)
+struct snif_cert *snif_cert_init_ex(struct snif_cert *cert, int flags);
 const char *snif_cert_hostname(struct snif_cert *cert);
+const char *snif_cert_sethostname(snif_cert *cert, const char *host);
 const char *snif_cert_alloccn(struct snif_cert *cert);
 void *snif_cert_pkey(struct snif_cert *cert);
 void *snif_cert_ctx(struct snif_cert *cert);

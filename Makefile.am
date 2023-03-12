@@ -44,10 +44,8 @@ snifd_snifd_LDADD = -lcrypto -lcurl -lssl
 snifd_snifd_SOURCES = $(LIB_CFILES) $(SNIFD_CFILES) $(LIB_HFILES) $(SNIFD_HFILES)
 
 snifd_etcdir = /etc/snif
-snifd_etc_DATA = etc/snif.conf
 
 install-data-hook:
-	useradd -U snif || true
-	chown snif:snif $(snifd_etcdir)
-	chmod 02750 $(snifd_etcdir)
+	[ -d $(snifd_etcdir) ] || ( ( useradd -U snif || true ) && mkdir -m 02750 $(snifd_etcdir) && chown snif:snif $(snifd_etcdir) )
+	cp -n etc/snif.conf $(snifd_etcdir)/
 	[ -d /lib/systemd/system ] && cp etc/systemd/* /lib/systemd/system || true

@@ -49,9 +49,25 @@
 char snifd_shutdn = 0;
 
 int snifd_parse(int l, char **parse, const char *arg) {
+    static struct snifd_parse_buf {
+	struct snifd_parse_buf *chain;
+	char arg[0];
+    } *buf = NULL;
+    struct snifd_parse_buf *b;
+    if (!parse) {
+	while (buf) {
+	    b = buf->chain;
+	    free(buf);
+	    buf = b;
+	}
+	return 0;
+    }
     if (!arg) return 0;
-    char *cp = strdup(arg);
-    char *s = cp;
+    b = malloc(sizeof(*b) + strlen(arg) + 1);
+    strcpy(b->arg, arg);
+    b->chain = buf;
+    buf = b;
+    char *s = b->arg;
     int i;
     int ct = 0;
     char **pp = parse;
@@ -100,14 +116,17 @@ enum {E_OK, E_ARG, E_VAL, E_END, E_CONFL, E_DUP, E_LSTN, E_CONN, E_IO, E_TLS, E_
 
 void snifd_shutdn_fn(int sig) {
     snifd_shutdn = 1;
+    fprintf(stderr, "signal %d...\n", sig);
 }
 
-int snifd_shutdn_sig(int sig) {
+int snifd_sig(int sig, void *hdl) {
     struct sigaction sa;
     sigaction(sig, NULL, &sa);
-    sa.sa_handler = &snifd_shutdn_fn;
+    sa.sa_handler = hdl;
     return sigaction(sig, &sa, NULL);
 }
+
+#define	snifd_shutdn_sig(sig)	snifd_sig(sig, &snifd_shutdn_fn)
 
 int main(int argc, char **argv, char **env) {
     snif_listen lstn = {
@@ -148,18 +167,22 @@ int main(int argc, char **argv, char **env) {
 	.pkey = NULL
     };
     struct snif_watch_port *wports = NULL;
+    char *whost = NULL;
     char watchf = 0;
     char er = E_OK;
     char waitf = 0;
     unsigned widx = 0;
     snifd_shutdn_sig(SIGINT);
     snifd_shutdn_sig(SIGTERM);
+    snifd_sig(SIGPIPE, SIG_IGN);
     snif_init();
     char hostname[256];
     if (gethostname(hostname, sizeof(hostname)) < 0) strcpy(hostname, "localhost");
     char *parse[3];
     int i;
     const char *host, *port;
+    char *snifhost = NULL;
+    int certflags = SNIF_F_LEGACY;
     for (i = 1; i < argc; i++) {
 	const char *a = argv[i];
 	if (a[0] == '-') {
@@ -197,8 +220,9 @@ int main(int argc, char **argv, char **env) {
 		    snifd_CHKR()
 		    snifd_CHKA(++i)
 		    snifd_parse(2, parse, argv[i]);
-		    host = parse[0];
+		    snifhost = (host = parse[0]) ? strdup(parse[0]) : NULL;
 		    port = parse[1] ? parse[1] : SNIF_DEFAULT_PORT;
+		    if (!wports) wports = malloc((argc - i + 1) * sizeof(*wports));
 		    if (!snif_watch(host, port, &cert, wports, &lstn)) er = E_CONN;
 		    watchf = 2;
 		    break;
@@ -220,12 +244,21 @@ int main(int argc, char **argv, char **env) {
 		    snifd_CHKA(++i)
 		    cert.initurl = argv[i];
 		    break;
+		case 'u':
+		    snifd_CHKR()
+		    snifd_CHKV(cert.apiurl)
+		    snifd_CHKA(++i)
+		    cert.apiurl = argv[i];
+		    break;
 		case 'd':
 		    waitf = 1;
 		    break;
 		case 't':
 		    snifd_CHKA(++i)
 		    if (sscanf(argv[i], "%hu", &snif_abuse_sense) != 1) er = E_VAL;
+		    break;
+		case 'P':
+		    certflags &= ~SNIF_F_LEGACY;
 		    break;
 		default:
 		    er = E_ARG;
@@ -272,23 +305,19 @@ int main(int argc, char **argv, char **env) {
 	    if (!lstn.srv) er = E_LSTN;
 	}
     } else if (er == E_OK && watchf) {
-	snif_cert_init(&cert);
+	snif_cert_init_ex(&cert, certflags);
 	char authf = 0;
+	if (snifhost) snif_cert_sethostname(&cert, snifhost);
 	while (!snifd_shutdn) {
 	    er = E_OK;
 	    if (snif_cert_ctx(&cert)) {
-		if (watchf < 2) {
-		    host = snif_cert_hostname(&cert);
-		    if (widx) {
-			char *h = strdup(host);
-			if (!(lstn.watch = snif_watch(h, (port = SNIF_DEFAULT_PORT), &cert, wports, &lstn))) {
-			    er = E_CONN;
-			    free(h);
-			}
-		    } else {
-			printf("%s\n", host);
-			snifd_shutdn = 1;
-		    }
+		host = snif_cert_hostname(&cert);
+		if (watchf < 2 && widx) {
+		    whost = strdup(host);
+		    if (!(lstn.watch = snif_watch(whost, (port = SNIF_DEFAULT_PORT), &cert, wports, &lstn))) er = E_CONN;
+		} else if (!widx) {
+		    printf("%s\n", host);
+		    snifd_shutdn = 1;
 		}
 	    } else if (cert.authurl) {
 		er = E_AUTH;
@@ -348,5 +377,10 @@ int main(int argc, char **argv, char **env) {
 	fprintf(stderr, "Shutdown failed\n");
 	if (er == E_OK) er = E_SHDN;
     }
+    snif_cert_reset(&cert);
+    free(snifhost);
+    free(whost);
+    free(wports);
+    snifd_parse(0, NULL, NULL);
     return er;
 }

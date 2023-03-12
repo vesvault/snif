@@ -35,6 +35,10 @@
 #include "abuse.h"
 #include "sock.h"
 
+#ifdef SNIF_DIAGS
+#include <syslog.h>
+#include <time.h>
+#endif
 
 snif_sock *snif_sock_initconn(snif_sock *sock) {
     sock->peer = NULL;
@@ -44,10 +48,18 @@ snif_sock *snif_sock_initconn(snif_sock *sock) {
     return sock;
 }
 
-void snif_sock_initpoll(snif_sock *sock, struct pollfd *pollfd) {
+void snif_sock_setpoll(snif_sock *sock, struct pollfd *pollfd, int ev) {
     pollfd->fd = sock->fd;
-    pollfd->events = POLLIN | POLLERR | POLLHUP | (sock->wr && sock->wr->len ? POLLOUT : 0);
+    pollfd->events = ev;
     pollfd->revents = 0;
+#ifdef SNIF_DIAGS
+    sock->diags.start = time(NULL);
+    sock->diags.in = sock->diags.out = sock->diags.err = sock->diags.hup = sock->diags.nval = sock->diags.pri = 0;
+#endif
+}
+
+void snif_sock_initpoll(snif_sock *sock, struct pollfd *pollfd) {
+    snif_sock_setpoll(sock, pollfd, POLLIN | POLLERR | POLLHUP | (sock->wr && sock->wr->len ? POLLOUT : 0));
 }
 
 void snif_sock_tmout(snif_sock *sock, int tmout) {
@@ -187,6 +199,34 @@ int snif_sock_out(snif_sock *sock, const char *src, int len) {
 
 void snif_sock_shutdown(snif_sock *sock) {
     if (sock->fd >= 0) {
+#ifdef SNIF_DIAGS
+	char lhost[64];
+	char lport[16];
+	char rhost[64];
+	char rport[16];
+	struct sockaddr_in6 sa;
+	socklen_t sl = sizeof(sa);
+	if (getsockname(sock->fd, (struct sockaddr *)&sa, &sl) < 0
+	    || getnameinfo((struct sockaddr *)&sa, sl, lhost, sizeof(lhost), lport, sizeof(lport), NI_NUMERICHOST | NI_NUMERICSERV) < 0
+	) lhost[0] = lport[0] = 0;
+	sl = sizeof(sa);
+	if (getpeername(sock->fd, (struct sockaddr *)&sa, &sl) < 0
+	    || getnameinfo((struct sockaddr *)&sa, sl, rhost, sizeof(rhost), rport, sizeof(rport), NI_NUMERICHOST | NI_NUMERICSERV) < 0
+	) rhost[0] = rport[0] = 0;
+	snif_log("diags poll=%lld fd=%d up=%lld addr=[%s]:%s peer=[%s]:%s in=%lld out=%lld err=%lld hup=%lld nval=%lld pri=%lld\n",
+	    sock->listen->ctpolls,
+	    sock->fd,
+	    (long long)(time(NULL) - sock->diags.start),
+	    lhost, lport,
+	    rhost, rport,
+	    sock->diags.in,
+	    sock->diags.out,
+	    sock->diags.err,
+	    sock->diags.hup,
+	    sock->diags.nval,
+	    sock->diags.pri
+	);
+#endif
 	shutdown(sock->fd, SHUT_RDWR);
 	close(sock->fd);
 	sock->fd = -1;

@@ -179,6 +179,7 @@ void snif_watch_pollfn(snif_sock *sock, struct pollfd *pollfd) {
 	case SSL_ERROR_ZERO_RETURN:
 	case SSL_ERROR_SSL:
 	case SSL_ERROR_SYSCALL:
+	    snif_log("watch=%d tls_accept=%d", sock->fd, r);
 	    return snif_watch_error(sock);
 	default:
 	    break;

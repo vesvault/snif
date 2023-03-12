@@ -26,7 +26,7 @@
 
 if [ -e ${SNIF_CONN_CRT} ]
 then
-    [ -w ${SNIF_CONN_CRT} -o "x$1" = "x-q" ] || echo Warning: SNIF cert ${SNIF_CONN_CRT} is not writable for ${USER}, renewal in this process WILL FAIL >&2
+    [ -w ${SNIF_CONN_CRT} -o "x$1" = "x-q" ] || echo Warning: SNIF cert ${SNIF_CONN_CRT} is not writable for ${USER}, a renewed cert will not be saved by this process >&2
 elif [ ! -d ${SNIF_CONN_DIR} ]
 then
     echo Error: SNIF dir ${SNIF_CONN_DIR} does not exist >&2
@@ -41,6 +41,14 @@ then
 fi
 
 SNIF_ARGS="-c ${SNIF_CONN_CRT} -k ${SNIF_CONN_KEY} -a ${SNIF_CONN_INITURL}"
+
+if [ "${SNIF_CONN_HOSTNAME}" ]
+then
+    SNIF_ARGS="${SNIF_ARGS} -r ${SNIF_CONN_HOSTNAME}"
+elif [ "${SNIF_CONN_HOSTNAME_PORTABLE}" -a "${SNIF_CONN_HOSTNAME_PORTABLE}" != "0" ]
+then
+    SNIF_ARGS="${SNIF_ARGS} -P"
+fi
 
 if [ "x$1" = "x-d" ]
 then

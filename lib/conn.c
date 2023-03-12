@@ -68,6 +68,7 @@ struct snif_conn *snif_conn_receive_cb(const char **ctlbuf, int ctllen, void *ar
 	    s += 13;
 	    int l = lf - s;
 	    conn = malloc(sizeof(*conn) + l);
+	    if (!conn) return NULL;
 	    memcpy(conn->connid, s, l);
 	    char *d = memchr(conn->connid, ' ', l);
 	    char *dtail = conn->connid + l;

@@ -32,6 +32,17 @@ typedef struct snif_sock {
     int listenidx;
     struct snif_listen *listen;
     void (* pollfn)(struct snif_sock *sock, struct pollfd *pollfd);
+#ifdef SNIF_DIAGS
+    struct {
+	long long start;
+	long long in;
+	long long out;
+	long long err;
+	long long hup;
+	long long nval;
+	long long pri;
+    } diags;
+#endif
     union {
 	struct {
 	    const char *host;
@@ -83,6 +94,7 @@ typedef struct snif_sock {
 } snif_sock;
 
 struct snif_sock *snif_sock_initconn(struct snif_sock *sock);
+void snif_sock_setpoll(struct snif_sock *sock, struct pollfd *pollfd, int ev);
 void snif_sock_initpoll(struct snif_sock *sock, struct pollfd *pollfd);
 int snif_sock_accept(struct snif_sock *sock, int abuse);
 int snif_sock_connect(const char *host, const char *port);

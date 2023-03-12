@@ -29,6 +29,9 @@
 #include "util.h"
 #include "listen.h"
 
+#ifdef SNIF_DIAGS
+#include <syslog.h>
+#endif
 
 snif_sock *snif_listen_add(snif_listen *lstn, snif_sock *sock) {
     if (!sock) return NULL;
@@ -77,8 +80,24 @@ int snif_listen_poll(snif_listen *lstn) {
     lstn->chktime = snif_time() + SNIF_LISTEN_TMOUT;
     int i;
     for (i = 0; i < lstn->pollct; i++) {
-	if (lstn->socks[i]) lstn->socks[i]->pollfn(lstn->socks[i], &lstn->pollfds[i]);
+	snif_sock *sk = lstn->socks[i];
+	struct pollfd *pl = &lstn->pollfds[i];
+#ifdef SNIF_DIAGS
+	int e = pl->revents & pl->events;
+	if (sk) {
+	    if (e & POLLIN) sk->diags.in++;
+	    if (e & POLLOUT) sk->diags.out++;
+	    if (e & POLLHUP) sk->diags.hup++;
+	    if (e & POLLNVAL) sk->diags.nval++;
+	    if (e & POLLERR) sk->diags.err++;
+	    if (e & POLLPRI) sk->diags.pri++;
+	} else if (pl->fd >= 0) snif_log("diags poll=%lld fd=%d ev=%08x sk=(nil)\n", lstn->ctpolls, pl->fd, e);
+#endif
+	if (sk) sk->pollfn(sk, pl);
     }
+#ifdef SNIF_DIAGS
+    lstn->ctpolls++;
+#endif
     return r;
 }
 
