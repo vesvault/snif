@@ -315,7 +315,7 @@ int main(int argc, char **argv, char **env) {
 		if (watchf < 2 && widx) {
 		    whost = strdup(host);
 		    if (!(lstn.watch = snif_watch(whost, (port = SNIF_DEFAULT_PORT), &cert, wports, &lstn))) er = E_CONN;
-		} else if (!widx) {
+		} else if (!widx && !waitf) {
 		    printf("%s\n", host);
 		    snifd_shutdn = 1;
 		}
@@ -372,6 +372,7 @@ int main(int argc, char **argv, char **env) {
     }
     if (er == E_OK) while (!snifd_shutdn) {
 	snif_listen_poll(&lstn);
+	if (watchf) snif_cert_idle(&cert);
     }
     if (snif_listen_shutdown(&lstn) < 0) {
 	fprintf(stderr, "Shutdown failed\n");

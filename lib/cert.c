@@ -610,14 +610,6 @@ void *snif_cert_ssl(snif_cert *cert) {
     return ssl;
 }
 
-void snif_cert_idle(snif_cert *cert) {
-    snif_cert_savecrt(cert);
-    if (cert->cn && time(NULL) >= cert->download_at && snif_cert_download(cert) > 0) {
-	SSL_CTX_free(cert->ctx);
-	cert->ctx = NULL;
-    }
-}
-
 void snif_cert_reset(snif_cert *cert) {
     if (cert->pkey) EVP_PKEY_free(cert->pkey);
     cert->pkey = NULL;
