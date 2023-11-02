@@ -1,8 +1,4 @@
-LIB_CFILES = lib/cert.c \
-lib/conn.c
-
-LIB_HFILES = lib/cert.h \
-lib/conn.h
+SUBDIRS = lib
 
 SNIFD_CFILES = snifd/listen.c \
 snifd/sock.c \
@@ -39,9 +35,9 @@ snifd/help.h
 
 bin_PROGRAMS = snifd/snifd
 bin_SCRIPTS = bin/snif-conn
-snifd_snifd_LDADD = -lcrypto -lcurl -lssl
+snifd_snifd_LDADD = lib/libsnif.la -lssl -lcrypto
 
-snifd_snifd_SOURCES = $(LIB_CFILES) $(SNIFD_CFILES) $(LIB_HFILES) $(SNIFD_HFILES)
+snifd_snifd_SOURCES = $(SNIFD_CFILES) $(SNIFD_HFILES)
 
 snifd_etcdir = /etc/snif
 

@@ -21,6 +21,9 @@
  **************************************************************************/
 
 
+#ifndef SNIF_CERT_H
+#define SNIF_CERT_H
+
 /**************************************************************************
  * All fields before .flags ore to be set directly.
  *   .certfile - file path for new or existing PEM cert
@@ -67,6 +70,8 @@ typedef struct snif_cert {
 } snif_cert;
 
 #define	SNIF_F_LEGACY		0x0001
+#define	SNIF_F_DIAGS		0x4000
+#define	SNIF_F_DEBUG		0x8000
 
 /**************************************************************************
  * RSA private key bits
@@ -101,9 +106,7 @@ typedef struct snif_cert {
 /**************************************************************************
  * App name for user-agent in the CA proxy requests
  **************************************************************************/
-#ifndef	SNIF_CERT_UAAPP
-#define	SNIF_CERT_UAAPP	snif-cert
-#endif
+extern const char *snif_cert_uaapp;
 
 /**************************************************************************
  * API retry timeout for renewal of a still valid cert
@@ -166,7 +169,7 @@ const char *snif_cert_hostname(struct snif_cert *cert);
 
 /**************************************************************************
  * Set the SNIF hostname. MUST match the current wildcard certificate,
- * otherwise SNUF relay will refuse the service.
+ * otherwise SNIF relay will refuse the service.
  **************************************************************************/
 const char *snif_cert_sethostname(snif_cert *cert, const char *host);
 
@@ -220,3 +223,4 @@ void *snif_cert_ssl(struct snif_cert *cert);
  **************************************************************************/
 void snif_cert_reset(struct snif_cert *cert);
 
+#endif

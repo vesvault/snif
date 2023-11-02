@@ -21,6 +21,9 @@
  **************************************************************************/
 
 
+#ifndef SNIF_CONN_H
+#define SNIF_CONN_H
+
 /**************************************************************************
  * An incoming SNIF connection notification.
  *   .srv - the server host:port the client intends to connect to,
@@ -78,8 +81,8 @@ struct snif_conn *snif_conn_receive_cb(const char **ctlbuf, int ctllen, void *ar
  *   ctllen - max space available in *ctlbuf
  *   hostname - from snif_cert_hostname()
  * On success - returns the length written to the buffer,
- *              *ctlbuf points to the next position. The buffer content is
- *              to be sent to the ctl connection by external logic
+ *              *fwdbuf points to the next position. The buffer content is
+ *              to be sent to the fwd connection by external logic
  * On error - returns 0
  **************************************************************************/
 int snif_conn_forward(char **fwdbuf, int fwdlen, struct snif_conn *conn);
@@ -152,3 +155,5 @@ int snif_conn_idle(char **ctlbuf, int ctllen);
  * Deallocate struct snif_conn returned by snif_conn_receive*
  **************************************************************************/
 #define	snif_conn_free(conn)	free(conn)
+
+#endif

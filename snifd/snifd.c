@@ -305,6 +305,7 @@ int main(int argc, char **argv, char **env) {
 	    if (!lstn.srv) er = E_LSTN;
 	}
     } else if (er == E_OK && watchf) {
+	snif_cert_uaapp = "snifd";
 	snif_cert_init_ex(&cert, certflags);
 	char authf = 0;
 	if (snifhost) snif_cert_sethostname(&cert, snifhost);

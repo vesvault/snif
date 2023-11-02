@@ -3,7 +3,7 @@
 
 
 AC_PREREQ([2.69])
-AC_INIT([snif], [0.99], [bugs@vesvault.com])
+AC_INIT([snif], [1.00], [bugs@vesvault.com])
 AC_CONFIG_SRCDIR([snifd/snifd.c])
 AC_CONFIG_HEADERS([config.h])
 
@@ -16,6 +16,8 @@ AM_MAINTAINER_MODE([disable])
 # Checks for programs.
 AC_PROG_CC
 AM_PROG_CC_C_O
+AC_PROG_LIBTOOL
+AC_PROG_RANLIB
 
 # Checks for header files.
 AC_CHECK_HEADERS([string.h stddef.h fcntl.h unistd.h sys/ioctl.h openssl/evp.h curl/curl.h poll.h])
@@ -31,6 +33,6 @@ AC_CHECK_FUNCS([strdup strndup memmove memset strerror poll])
 
 AC_PREFIX_DEFAULT(/usr)
 
-AC_CONFIG_FILES([Makefile])
+AC_CONFIG_FILES([Makefile lib/Makefile])
 AC_OUTPUT
 

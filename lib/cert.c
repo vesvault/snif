@@ -38,8 +38,9 @@
 #include <errno.h>
 #include "cert.h"
 
+const char *snif_cert_uaapp = "snif-cert";
 
-int snif_cert_passfn(char *buf, int size, int rwflag, void *u) {
+static int snif_cert_passfn(char *buf, int size, int rwflag, void *u) {
     snif_cert *cert = u;
     if (!cert->passphrase) return -1;
     int l = strlen(cert->passphrase);
@@ -53,7 +54,7 @@ struct snif_cert_buf {
     char buf[SNIF_CERT_MAXSIZE];
 };
 
-size_t snif_cert_curldlfn(void *ptr, size_t size, size_t nmemb, void *stream) {
+static size_t snif_cert_curldlfn(void *ptr, size_t size, size_t nmemb, void *stream) {
     int len = size * nmemb;
     struct snif_cert_buf *cbuf = stream;
     if (cbuf->len < 0 || len > sizeof(cbuf->buf) - cbuf->len) {
@@ -65,7 +66,7 @@ size_t snif_cert_curldlfn(void *ptr, size_t size, size_t nmemb, void *stream) {
     return len;
 }
 
-size_t snif_cert_curlhdrfn(void *ptr, size_t size, size_t nmemb, void *stream) {
+static size_t snif_cert_curlhdrfn(void *ptr, size_t size, size_t nmemb, void *stream) {
     int len = size * nmemb;
     snif_cert *cert = stream;
     char hkey[32];
@@ -104,7 +105,7 @@ size_t snif_cert_curlhdrfn(void *ptr, size_t size, size_t nmemb, void *stream) {
     return len;
 }
 
-size_t snif_cert_curlignorefn(void *ptr, size_t size, size_t nmemb, void *stream) {
+static size_t snif_cert_curlignorefn(void *ptr, size_t size, size_t nmemb, void *stream) {
     return size * nmemb;
 }
 
@@ -113,7 +114,7 @@ struct snif_cert_upbuf {
     char *buf;
 };
 
-size_t snif_cert_curlsendfn(void *ptr, size_t size, size_t nmemb, void *stream) {
+static size_t snif_cert_curlsendfn(void *ptr, size_t size, size_t nmemb, void *stream) {
     struct snif_cert_upbuf *up = stream;
     int len = size * nmemb;
     if (len > up->len) len = up->len;
@@ -123,7 +124,7 @@ size_t snif_cert_curlsendfn(void *ptr, size_t size, size_t nmemb, void *stream) 
     return len;
 }
 
-CURLcode snif_cert_curlctxfn(CURL *curl, void *sslctx, void *parm) {
+static CURLcode snif_cert_curlctxfn(CURL *curl, void *sslctx, void *parm) {
     snif_cert *cert = parm;
 #if	(OPENSSL_VERSION_NUMBER >= 0x10002000L)
     if (cert->rootstore) SSL_CTX_set1_verify_cert_store(sslctx, cert->rootstore);
@@ -141,20 +142,16 @@ void *snif_cert_curlfn(snif_cert *cert) {
 #ifdef SNIF_CAINFO
     curl_easy_setopt(curl, CURLOPT_CAINFO, SNIF_CAINFO);
 #endif
-#ifdef SNIF_DEBUG
-    curl_easy_setopt(curl, CURLOPT_VERBOSE, 1);
-#endif
+    if (cert->flags & SNIF_F_DEBUG) curl_easy_setopt(curl, CURLOPT_VERBOSE, 1);
     return curl;
 }
 
-char *snif_cert_curlua(snif_cert *cert, char *buf) {
-#define	SNIF_CERT_UAAPPSTR2(_app)	#_app
-#define	SNIF_CERT_UAAPPSTR(_app)	SNIF_CERT_UAAPPSTR2(_app)
-    sprintf(buf, "User-Agent: %s SNIF (https://snif.host) (%s)", SNIF_CERT_UAAPPSTR(SNIF_CERT_UAAPP), curl_version());
+static char *snif_cert_curlua(snif_cert *cert, char *buf) {
+    sprintf(buf, "User-Agent: %s libsnif (https://snif.host) (%s)", snif_cert_uaapp, curl_version());
     return buf;
 }
 
-time_t snif_cert_asn1time(const ASN1_TIME *t) {
+static time_t snif_cert_asn1time(const ASN1_TIME *t) {
     if (!t) return 0;
     int l = ASN1_STRING_length(t);
     if (l < 13) return 0;
@@ -179,6 +176,7 @@ const char *snif_cert_basecn(snif_cert *cert) {
 }
 
 const char *snif_cert_hostname(snif_cert *cert) {
+    if (!cert->cn) snif_cert_ctx(cert);
     if (!cert->hostname && cert->cn) {
 	if (cert->cn[0] == '*') {
 	    EVP_PKEY *pkey = snif_cert_pkey(cert);
@@ -218,7 +216,7 @@ const char *snif_cert_sethostname(snif_cert *cert, const char *host) {
     return cert->hostname = host ? strdup(host) : NULL;
 }
 
-int snif_cert_setsubj(snif_cert *cert, X509_NAME *subj) {
+static int snif_cert_setsubj(snif_cert *cert, X509_NAME *subj) {
     return (X509_NAME_add_entry_by_NID(subj, NID_countryName, MBSTRING_ASC, (unsigned char *)"US", -1, -1, 0) > 0
 	&& X509_NAME_add_entry_by_NID(subj, NID_organizationName, MBSTRING_ASC, (unsigned char *)SNIF_CERT_SUBJ_O, -1, -1, 0) > 0
 	&& (!cert->ou || X509_NAME_add_entry_by_NID(subj, NID_organizationalUnitName, MBSTRING_ASC, (unsigned char *)cert->ou, -1, -1, 0) > 0)
@@ -235,7 +233,7 @@ int snif_cert_setsubj(snif_cert *cert, X509_NAME *subj) {
 #define	snif_cert_sslmethod()		TLSv1_2_server_method()
 #endif
 
-int snif_cert_verify_chain(snif_cert *cert, BIO *in) {
+static int snif_cert_verify_chain(snif_cert *cert, BIO *in) {
     X509 *crt = PEM_read_bio_X509(in, NULL, NULL, NULL);
     if (!crt) return (snif_cert_TLSERR(cert), 0);
     X509_STORE_CTX *sctx = X509_STORE_CTX_new();
@@ -263,7 +261,6 @@ int snif_cert_verify_chain(snif_cert *cert, BIO *in) {
     cert->tlserr.ctxdepth = X509_STORE_CTX_get_error_depth(sctx);
     X509_STORE_CTX_cleanup(sctx);
     X509_STORE_CTX_free(sctx);
-//    while ((ccrt = sk_X509_pop(ca))) X509_free(ccrt);
     sk_X509_free(ca);
     if (vrfy > 0) vrfy = X509_check_private_key(crt, snif_cert_pkey(cert));
     else snif_cert_TLSERR(cert);
@@ -311,13 +308,13 @@ const char *snif_cert_alloccn(snif_cert *cert) {
     return cert->cn = NULL;
 }
 
-void snif_cert_apiurl(snif_cert *cert, char *buf, const char *suf) {
+static void snif_cert_apiurl(snif_cert *cert, char *buf, const char *suf) {
     const char *bn = snif_cert_basecn(cert);
     sprintf(buf, "http://%s/snif-cert/%s.crt", bn, bn);
     sprintf(buf, (cert->apiurl ? "%s%s%s" : "http://%s/snif-cert/%s%s"), (cert->apiurl ? cert->apiurl : bn), bn, suf);
 }
 
-int snif_cert_sendreq(snif_cert *cert, X509_REQ *req) {
+static int snif_cert_sendreq(snif_cert *cert, X509_REQ *req) {
     BIO *bio = BIO_new(BIO_s_mem());
     if (PEM_write_bio_X509_REQ(bio, req) <= 0) {
 	BIO_free(bio);
@@ -375,10 +372,8 @@ snif_cert *snif_cert_init_ex(snif_cert *cert, int flags) {
 	cert->rootstore = cert->alloc_rootstore = X509_STORE_new();
 	X509_STORE_set_default_paths(cert->rootstore);
     }
-#ifdef SNIF_CERT_DIAGS
     cert->tlserr.line = 0;
     cert->tlserr.code = 0;
-#endif
     cert->unsaved = NULL;
     return cert;
 }
@@ -411,13 +406,11 @@ int snif_cert_download(snif_cert *cert) {
     curl_easy_setopt(curl, CURLOPT_URL, buf);
     struct curl_slist *hdrs = curl_slist_append(NULL, "Accept: application/x-x509-ca-cert, application/pkix-cert");
     hdrs = curl_slist_append(hdrs, snif_cert_curlua(cert, buf));
-#ifdef SNIF_CERT_DIAGS
-    if (cert->tlserr.line) {
+    if ((cert->flags & SNIF_F_DIAGS) && cert->tlserr.line) {
 	sprintf(buf, "X-SNIF-Diags: l=%hd;e=%lx;c=%hd;d=%hd;t=%llu", cert->tlserr.line, cert->tlserr.code, cert->tlserr.ctxcode, cert->tlserr.ctxdepth, time(NULL));
 	hdrs = curl_slist_append(hdrs, buf);
 	cert->tlserr.line = 0;
     }
-#endif
     curl_easy_setopt(curl, CURLOPT_HTTPHEADER, hdrs);
     curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, &snif_cert_curlhdrfn);
     curl_easy_setopt(curl, CURLOPT_HEADERDATA, cert);
