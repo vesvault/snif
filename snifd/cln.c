@@ -178,7 +178,6 @@ void snif_cln_pollfn(snif_sock *sock, struct pollfd *pollfd) {
 	case SSL_ERROR_NONE:
 	case SSL_ERROR_ZERO_RETURN:
 	case SSL_ERROR_SSL:
-	case SSL_ERROR_SYSCALL:
 	    return snif_cln_error(sock);
 	default:
 	    break;
