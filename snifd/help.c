@@ -6,17 +6,17 @@
  *  | |     |  ``/`````\___/       e2e TLS CA Proxy
  *  | |     | . | <"""""""~~
  *  |  \___/ ``  \________/        https://snif.host
- *   \  '''  ``` /````````         (C) 2021 VESvault Corp
+ *   \  '''  ``` /````````         (C) 2021-2026 VESvault Corp
  *    \_________/                  Jim Zubov <jz@vesvault.com>
  *
  *
- * GNU General Public License v3
- * You may opt to use, copy, modify, merge, publish, distribute and/or sell
- * copies of the Software, and permit persons to whom the Software is
- * furnished to do so, under the terms of the COPYING file.
+ * Apache License, Version 2.0
+ * You may use, copy, modify, merge, publish, distribute and/or sell copies
+ * of the Software under the terms of the Apache License, Version 2.0, a copy
+ * of which is provided in the COPYING file, or http://www.apache.org/licenses/LICENSE-2.0
  *
- * This software is distributed on an "AS IS" basis, WITHOUT WARRANTY OF ANY
- * KIND, either express or implied.
+ * This software is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR
+ * CONDITIONS OF ANY KIND, either express or implied.
  *
  **************************************************************************/
 
@@ -43,7 +43,7 @@ const char *snif_banner =
 " \x1b[1m|\x1b[0m \x1b[2;33m|     |\x1b[0m \x1b[1m\\__\x1b[0m\x1b[1;30m|\x1b[0m\x1b[1m_____\x1b[0m\x1b[1;30m/  o\\\x1b[0m        e2e TLS CA Proxy\n"
 " \x1b[1m|\x1b[0m \x1b[2;33m|     |\x1b[0m  \x1b[1;30m``/`````\\___/\x1b[0m\n"
 " \x1b[1m|\x1b[0m \x1b[2;33m|     |\x1b[0m \x1b[1;30m. |\x1b[0m <\x1b[1m\"\"\"\"\"\"\"\x1b[0m\x1b[1;31m~~\x1b[0m        https://snif.host\n"
-" \x1b[1m|\x1b[0m  \x1b[2;33m\\___/\x1b[0m \x1b[1;30m``  \\\x1b[0m\x1b[1m________/\x1b[0m         (C) 2021 VESvault Corp\n"
+" \x1b[1m|\x1b[0m  \x1b[2;33m\\___/\x1b[0m \x1b[1;30m``  \\\x1b[0m\x1b[1m________/\x1b[0m         (C) 2021-2026 VESvault Corp\n"
 "  \x1b[1m\\\x1b[0m  \x1b[2;33m'''\x1b[0m  \x1b[1;30m```\x1b[0m \x1b[1m/\x1b[0m\x1b[1;30m````````\x1b[0m          \x1b[1msnifd\x1b[0m v." SNIF_VERSION_STR "\n"
 "   \x1b[1m\\_________/\x1b[0m\n"
 "\n";

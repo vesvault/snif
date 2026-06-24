@@ -7,73 +7,82 @@
  *  | |     |  ``/`````\___/       e2e TLS CA Proxy
  *  | |     | . | <"""""""~~
  *  |  \___/ ``  \________/        https://snif.host
- *   \  '''  ``` /````````         (C) 2021 VESvault Corp
+ *   \  '''  ``` /````````         (C) 2021-2026 VESvault Corp
  *    \_________/                  Jim Zubov <jz@vesvault.com>
  *
  *
- * GNU General Public License v3
- * You may opt to use, copy, modify, merge, publish, distribute and/or sell
- * copies of the Software, and permit persons to whom the Software is
- * furnished to do so, under the terms of the COPYING file.
+ * Apache License, Version 2.0
+ * You may use, copy, modify, merge, publish, distribute and/or sell copies
+ * of the Software under the terms of the Apache License, Version 2.0, a copy
+ * of which is provided in the COPYING file, or http://www.apache.org/licenses/LICENSE-2.0
  *
- * This software is distributed on an "AS IS" basis, WITHOUT WARRANTY OF ANY
- * KIND, either express or implied.
+ * This software is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR
+ * CONDITIONS OF ANY KIND, either express or implied.
  *
  **************************************************************************/
 ```
 
+# SNIF — end-to-end TLS trust for devices behind NAT
 
-# SUMMARY:
+[![build](https://github.com/vesvault/snif/actions/workflows/build.yml/badge.svg)](https://github.com/vesvault/snif/actions/workflows/build.yml)
+[![codeql](https://github.com/vesvault/snif/actions/workflows/codeql.yml/badge.svg)](https://github.com/vesvault/snif/actions/workflows/codeql.yml)
+[![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](COPYING)
+[![IETF draft](https://img.shields.io/badge/IETF-draft--zubov--snif-orange.svg)](https://datatracker.ietf.org/doc/draft-zubov-snif/)
 
-SNIF enables anonymous end-to-end public trust TLS communications between apps
-through a designated SNIF relay. By providing TLS public trust on a full
-end-to-end level, SNIF creates a peer-to-peer app-level VPN, eliminating the
-middle-man and any corresponding ability to intercept, monitor or read the
-private communication.
+**SNIF gives any app on any device a public, browser-trusted HTTPS hostname —
+without a public IP, a port forward, or handing your private key to anyone.**
 
-Any app on any device can utilize a designated SNIF relay to allow any other
-app on any device to directly communicate with the SNIF enabled app via a
-trusted, certificated and anonymous host name using full end-to-end TLS
-encryption.
-
+A device generates its own TLS private key, gets a real CA-issued certificate
+for a `*.snif.xyz` hostname, and accepts inbound TLS connections relayed
+through a public SNIF relay. The relay forwards the raw encrypted TCP stream by
+its SNI record — it never holds the private key and cannot read or alter the
+traffic. The result is a peer-to-peer, app-level TLS tunnel with no readable
+middle-man.
 
 
-# HOW IT WORKS:
+## The problem it solves
+
+IoT devices, home servers, and mobile apps usually sit behind NAT with no
+public IP and no stable DNS name. The common workarounds all give up
+end-to-end trust:
+
+- **Port forwarding / dynamic DNS** — needs router access and exposes the
+  device directly.
+- **Reverse-proxy tunnels** — the provider terminates TLS, so it can read and
+  modify everything passing through.
+- **VPNs** — heavy to provision per-device and still trust a concentrator.
+
+SNIF keeps TLS terminated **on the device**. The relay only sees an opaque,
+SNI-routed byte stream, and any misbehavior is publicly detectable through the
+CA certificate records.
+
+
+## How it works
 
 The private key is generated locally by the SNIF connector and never leaves
 the device.
 
-The connector sends a CSR to the CA proxy on the SNIF relay server. The proxy
-acquires an X.509 certificate and feeds it back to the device.
+The connector sends a CSR to the CA proxy on the SNIF relay. The proxy obtains
+an X.509 certificate and returns it to the device.
 
-Having the certificate and the private key, the connector is now capable of
-terminating TLS traffic. Incoming TLS connections to the device's hostname
-come to the SNIF relay, which uses SNI record to identify the destination
-device and forward the TLS TCP socket traffic through the matching connector.
+With the certificate and the private key, the connector can terminate TLS.
+Incoming connections to the device's hostname arrive at the relay, which reads
+the SNI record to identify the destination device and forwards the TLS TCP
+stream through the matching connector.
 
-An IoT device can run snifd connector as a separate process that forwards
-incoming TLS connections to local ports, either unsecure TCP with TLS being
-terminated by snifd, or TLS being terminated by the listening app using the
-certificate and the private key shared with snifd.
+A device can run `snifd` as a separate connector process that forwards incoming
+TLS to local ports — either as plain TCP with `snifd` terminating TLS, or with
+TLS terminated by the listening app using the shared certificate and key. In
+more advanced setups the connector is integrated directly into the serving app.
 
-In more advanced setups SNIF connector can be integrated directly with the
-app that serves incoming connections on the device.
+From the client's point of view, a TLS connection to a SNIF hostname works
+exactly like a connection to any trusted server.
 
-From the client's point of view, a TLS connection to the hostname of the
-SNIF enabled device or app works same way as a TLS connection to a trusted
-server.
+To avoid exposing a unique device hostname through public CA logs, the CA proxy
+can issue a wildcard certificate for a subdomain; the actual hostname is then a
+specific, unlisted host within that subdomain.
 
-Any potential attempts of malicious actions by any SNIF relay are easily
-detectable through the public TLS certificate records.
-
-To avoid public exposure of the unique SNIF hostname through the public CA
-records, the CA proxy can issue a wildcard certificate to a unique subdomain.
-The actual hostname will be a specific host within the certificate's subdomain
-that is not listed on the public records.
-
-
-
-# INITIALIZING THE TLS CERTIFICATE:
+### Initializing the TLS certificate
 ```
                    DNS: *.snif.xyz
                          |               (no public IP or DNS hostname)
@@ -93,8 +102,7 @@ Certificate     | snif-cert:     |     |                                |
 +---------+     +----------------+     +--------------------------------+
 ```
 
-
-# ACCEPTING TLS CONNECTIONS:
+### Accepting TLS connections
 ```
                    DNS: *.snif.xyz
                          |               (no public IP or DNS hostname)
@@ -124,75 +132,106 @@ Certificate     | snif-cert:     |     |                                |
 +--------------------------+
 ```
 
-# RUN A SNIF CONNECTOR DAEMON ON THE TARGET DEVICE
-```
+
+## Quick start — run a connector on a device
+
+```sh
 ./configure
 make
 sudo make install
+```
 
-# Review settings in /etc/snif/snif.conf, edit the port mapping and other
-# variables if necessary. The configuration defaults to the public SNIF
-# Relay by VESvault, see https://snif.host for terms of use
+Review `/etc/snif/snif.conf` and adjust the port mapping and other variables if
+needed. The configuration defaults to the public SNIF relay operated by
+VESvault — see https://snif.host for the terms of use.
 
+```sh
+# First run prints an authorization link — open it to authorize cert issuance
 snif-conn
 
-# Follow the link the command outputs to authorize the certificate issuance
-
+# Run again once authorized; it prints the SNIF hostname permanently
+# assigned to this connector
 snif-conn
+```
 
-# Once authorization is complete, the command outputs the SNIF host name
-# permanently assigned to this Connector.
+Then enable the daemon (a systemd unit is installed automatically when
+`/lib/systemd/system` is available):
 
-# Configure the system to automatically launch snif-conn as a daemon with
-# the argument '-d'. A systemd service file is included in this package, and
-# is automatically installed in /lib/systemd/system if this path is available
-
+```sh
 systemctl enable snif-conn
 systemctl start snif-conn
+```
 
-# Configure local TLS services mapped to SNIF ports to use the SNIF
-# certificate and private key - /etc/snif/snif.crt, /etc/snif/snif.key
-# For non-root processes, add the uid to group 'snif' to enable access
-# to the files.
+Point your local TLS services at the SNIF certificate and key —
+`/etc/snif/snif.crt` and `/etc/snif/snif.key`. For non-root processes, add the
+service uid to the `snif` group to grant access to those files.
 
-# Test the SNIF connection - check https://{snif_host_name}
-# assuming that SNIF port 443 is mapped to the https server running on the
-# device.
+Test it: assuming SNIF port 443 maps to the device's HTTPS server, open
+`https://{snif_host_name}` from anywhere.
+
+
+## Embed the connector in an app
+
+To integrate SNIF directly instead of running `snif-conn`:
+
+- Use [`lib/cert.h`](lib/cert.h) to allocate the SNIF hostname, generate the
+  private key, and issue and renew the certificate.
+- Open a SNIF control connection to `{snif_host_name}` on TCP port `snif`
+  (7123).
+- Use [`lib/conn.h`](lib/conn.h) to send and receive SNIF messages over the
+  control connection and to manage service connections.
+
+The connector libraries build as `libsnif`.
+
+
+## Run a private SNIF relay
+
+The relay is a standalone deployment (connector + relay `snifd` plus the CA
+proxy). It does not need to be embedded in anything else. See
+[`ca-proxy/README`](ca-proxy/README) for setup instructions.
+
+
+## Contents
+
+```
+lib/        SNIF connector libraries (libsnif) source
+snifd/      SNIF daemon source — relay and connector
+ca-proxy/   CA proxy scripts and web API
 ```
 
 
-# SET UP A PRIVATE SNIF RELAY
+## Requirements
 
-See ca-proxy/README.md for instructions
+**Connector (`snifd` + `snif-conn`)**
+- OpenSSL >= 1.0.1
+- cURL
 
-
-# EMBED THE SNIF CONNECTOR IN AN APP
-
-Use lib/cert.h to allocate the SNIF hostname, generate the private key,
-issue and renew the certificate.
-
-Establish a SNIF Control Connection to {snif_host_name} on TCP port "snif"
-(7123).
-
-Use lib/conn.h to receive and send SNIF messages over the control
-connection and to manage service connections.
+**Private relay (`snifd` + `snif-relay` + `ca-proxy`)**
+- HTTP + HTTPS server with `.htaccess` (tested on Apache)
+- `mod_rewrite` and `mod_headers` (adjust the `.htaccess` files for other servers)
+- PHP + `mod_php`
+- Perl + CPAN
 
 
-# CONTENTS:
-```
-lib/        SNIF Connector libraries source code
-snifd/      SNIF Daemon source code, Relay and Connector
-ca-proxy/   CA Proxy scripts and web API
-```
+## Specification & security
 
-# REQUIREMENTS:
+SNIF is a specified open protocol, published as the IETF Internet-Draft
+[draft-zubov-snif](https://datatracker.ietf.org/doc/draft-zubov-snif/)
+("Deploying Publicly Trusted TLS Servers on IoT Devices Using SNI-based
+End-to-End TLS Forwarding"). A snapshot and a plain-language trust model live in
+[`doc/`](doc/):
 
-## SNIF Connector (snifd + snif-conn):
-    OpenSSL >= 1.0.1
-    cURL
+- [doc/security-model.md](doc/security-model.md) — what SNIF protects, the trust
+  assumptions, and the threat model.
+- [doc/draft-zubov-snif-04.txt](doc/draft-zubov-snif-04.txt) — vendored spec snapshot.
 
-## Private SNIF Relay (snifd + snif-relay + ca-proxy):
-    http + https server + .htaccess (tested on Apache)
-    mod_rewrite and mod_headers for Apache, .htaccess files may need to be adjusted for other servers
-    PHP + mod_php
-    perl + cpan
+To report a vulnerability, see [SECURITY.md](SECURITY.md) — please disclose
+privately, not via public issues.
+
+
+## License
+
+SNIF is licensed under the **Apache License, Version 2.0** — see [COPYING](COPYING)
+and [NOTICE](NOTICE). Both the connector and the relay are permissively licensed:
+you can embed the connector in proprietary apps and stand up your own relay
+without copyleft obligations.
