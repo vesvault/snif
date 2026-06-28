@@ -33,7 +33,17 @@ $CrtPath = "$BasePath/crt";
 $CSRMinSize = 128;
 $CSRMaxSize = 16384;
 
-$Domain = strtolower($_SERVER['HTTP_HOST']);
+if ($_SERVER['REQUEST_METHOD'] == 'OPTIONS') exit;
+
+# The certificate CN is taken from the request path (/snif-cert/<cn>.csr|.crt)
+# so this endpoint can be served both from the per-host catch-all domain and
+# from the HTTPS initialization origin (e.g. snif.snif.xyz:4443), where the Host
+# header is the init host rather than the CN. Falls back to the Host header.
+if (preg_match('#/snif-cert/([^/?]+)\.(?:csr|crt)(?:[?\#].*)?$#', $_SERVER['REQUEST_URI'], $rm)) {
+    $Domain = strtolower($rm[1]);
+} else {
+    $Domain = strtolower($_SERVER['HTTP_HOST']);
+}
 if (!preg_match('/^\w([\.\-]?\w)*$/', $Domain)) {
     header('HTTP/1.0 400 Bad Request');
     exit;
