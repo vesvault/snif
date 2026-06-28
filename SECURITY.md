@@ -43,7 +43,7 @@ In scope:
 - the SNIF connector (`lib/`, `snifd/`, `bin/snif-conn`),
 - the SNIF relay (`snifd` relay mode, `bin/snif-relay`),
 - the SNIF CA proxy (`ca-proxy/`),
-- the protocol itself (see [`doc/`](doc/) and
+- the protocol itself (see [`security-model.md`](security-model.md) and
   [draft-zubov-snif](https://datatracker.ietf.org/doc/draft-zubov-snif/)) —
   protocol-level weaknesses are in scope even if no implementation bug exists.
 
@@ -65,6 +65,6 @@ latest release and to `master`. Please verify a report against the current
 
 The security claims SNIF makes — what the relay can and cannot do, key
 custody, and the threat model — are documented in
-[`doc/security-model.md`](doc/security-model.md) and Section 5 of the
-[Internet-Draft](doc/draft-zubov-snif-04.txt). Reports that challenge those
+[`security-model.md`](security-model.md) and Section 5 of the
+[Internet-Draft](https://datatracker.ietf.org/doc/draft-zubov-snif/). Reports that challenge those
 claims are especially welcome.

@@ -69,18 +69,20 @@ if (file_exists("$AuthDir/$cn.auth")) {
     exit;
 }
 
-require "$BaseDir/inc/snif-auth-ves.php";
-
-$auth = snif_auth_ves();
-
-if (!isset($auth)) {
-    header("Location: $AuthPageUrl" . "https://" . $_SERVER['HTTP_HOST'] . $_SERVER['REQUEST_URI']);
-    exit;
-}
-
-if (!$auth) {
-    header("HTTP/1.0 401 Unauthorized");
-    exit;
+if (isset($_POST['cf-turnstile-response']) || isset($_SERVER['HTTP_X_SNIF_CAPTCHA'])) {
+    require "$BaseDir/inc/snif-auth-captcha.php";
+    $auth = snif_auth_captcha();
+} else {
+    require "$BaseDir/inc/snif-auth-ves.php";
+    $auth = snif_auth_ves();
+    if (!isset($auth)) {
+	header("Location: $AuthPageUrl" . "https://" . $_SERVER['HTTP_HOST'] . $_SERVER['REQUEST_URI']);
+	exit;
+    }
+    if (!$auth) {
+	header("HTTP/1.0 401 Unauthorized");
+	exit;
+    }
 }
 
 if (!file_put_contents("$AuthDir/$cn.auth", $auth)) {

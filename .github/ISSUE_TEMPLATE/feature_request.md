@@ -17,8 +17,8 @@ A clear description of what you'd like to happen.
 
 ## Protocol impact
 
-<!-- Does this require a change to the SNIF protocol (see doc/ and
-     draft-zubov-snif)? If so, note which part. Protocol changes are a bigger
+<!-- Does this require a change to the SNIF protocol (see security-model.md and
+     the IETF draft draft-zubov-snif)? If so, note which part. Protocol changes are a bigger
      commitment than implementation features. -->
 
 ## Alternatives considered

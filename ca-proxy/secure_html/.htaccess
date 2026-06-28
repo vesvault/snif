@@ -2,9 +2,16 @@ DirectoryIndex snif-auth.php
 
 RewriteEngine On
 
+# Certificate API (CSR submission + cert retrieval) over the init origin's HTTPS,
+# so browser connectors avoid mixed content. Must precede the snif-auth catch-all.
+RewriteRule ^/?snif-cert/(.*)$ snif-cert.php/$1 [L]
+
 RewriteCond %{REQUEST_FILENAME} !-f
 RewriteRule /*(.*) snif-auth.php/$1
 
-Header set Access-Control-Allow-Origin "*"
-Header set Access-Control-Allow-Methods "GET,POST"
-Header set Access-Control-Allow-Headers "Content-Type, Authorization,X-VES-Authorization"
+# CORS, set with "always" so it also covers the non-2xx responses the browser
+# flow reads (e.g. the 401 cert-poll carrying X-SNIF-AuthUrl).
+Header always set Access-Control-Allow-Origin "*"
+Header always set Access-Control-Allow-Methods "GET,POST,PUT,OPTIONS"
+Header always set Access-Control-Allow-Headers "Content-Type, Authorization, X-VES-Authorization, X-SNIF-Captcha"
+Header always set Access-Control-Expose-Headers "X-SNIF-CN, X-SNIF-AuthUrl"

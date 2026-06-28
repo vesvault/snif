@@ -3,7 +3,7 @@
 This document states precisely what SNIF protects, what it does **not**, and
 the trust assumptions behind the claim that *"the relay cannot read or alter
 your traffic."* It summarizes Section 5 (Security Considerations) of the
-[Internet-Draft](draft-zubov-snif-04.txt); the draft is normative where the two
+[Internet-Draft](https://datatracker.ietf.org/doc/draft-zubov-snif/); the draft is normative where the two
 disagree.
 
 ## Roles

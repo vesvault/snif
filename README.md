@@ -39,6 +39,15 @@ its SNI record — it never holds the private key and cannot read or alter the
 traffic. The result is a peer-to-peer, app-level TLS tunnel with no readable
 middle-man.
 
+## Try it live — in your browser
+
+**[Issue yourself a real, browser-trusted TLS certificate, right in this page →](https://snif.host/demo/)**
+
+No install, no account. A WebAssembly SNIF connector generates a private key
+inside the browser tab, requests a CA-issued certificate for a `*.snif.xyz`
+hostname, and hands it back — a publicly trusted certificate whose private key
+the relay never sees.
+
 
 ## The problem it solves
 
@@ -55,6 +64,31 @@ end-to-end trust:
 SNIF keeps TLS terminated **on the device**. The relay only sees an opaque,
 SNI-routed byte stream, and any misbehavior is publicly detectable through the
 CA certificate records.
+
+
+## How SNIF compares
+
+Like ngrok, Cloudflare Tunnel, and Tailscale Funnel, SNIF gives a device behind
+NAT a public hostname. The differences are *who can read the traffic* and *what
+it takes to run*:
+
+| | SNIF | ngrok | Cloudflare Tunnel | Tailscale Funnel |
+|---|---|---|---|---|
+| Relay can read your traffic | **No** ¹ | Yes | Yes | No |
+| Works without an account | **Yes** (anonymous) | No | No | No |
+| Self-hostable relay | **Yes** (Apache-2.0) | No | No ² | Partial ³ |
+| Open, published protocol | **Yes** (IETF draft) | No | No | No |
+| Any standard TLS client, no client app | Yes | Yes | Yes | Yes |
+| Device footprint | small C connector | Go agent | Go agent | full mesh agent |
+
+¹ SNIF and Tailscale Funnel forward the TLS stream by its SNI record and
+terminate it **on your device**; ngrok and Cloudflare terminate TLS at their
+edge and can see plaintext. (ngrok offers end-to-end TLS tunnels as a
+non-default option.)
+² Cloudflare's `cloudflared` daemon is open source, but the tunnel ingress is
+Cloudflare's proprietary network.
+³ Tailscale's control plane and DERP relays can be self-hosted unofficially
+(headscale plus a custom DERP); the official service is proprietary.
 
 
 ## How it works
@@ -215,15 +249,14 @@ ca-proxy/   CA proxy scripts and web API
 
 ## Specification & security
 
-SNIF is a specified open protocol, published as the IETF Internet-Draft
+SNIF is a specified open protocol, first published as the IETF Internet-Draft
 [draft-zubov-snif](https://datatracker.ietf.org/doc/draft-zubov-snif/)
 ("Deploying Publicly Trusted TLS Servers on IoT Devices Using SNI-based
-End-to-End TLS Forwarding"). A snapshot and a plain-language trust model live in
-[`doc/`](doc/):
+End-to-End TLS Forwarding"); a revised draft is in preparation. The canonical
+spec lives on the IETF datatracker; a plain-language trust model lives here:
 
-- [doc/security-model.md](doc/security-model.md) — what SNIF protects, the trust
+- [security-model.md](security-model.md) — what SNIF protects, the trust
   assumptions, and the threat model.
-- [doc/draft-zubov-snif-04.txt](doc/draft-zubov-snif-04.txt) — vendored spec snapshot.
 
 To report a vulnerability, see [SECURITY.md](SECURITY.md) — please disclose
 privately, not via public issues.
