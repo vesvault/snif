@@ -204,12 +204,34 @@ Test it: assuming SNIF port 443 maps to the device's HTTPS server, open
 `https://{snif_host_name}` from anywhere.
 
 
+## Quick start — Docker
+
+```sh
+docker run -d --name snif -v snif-etc:/etc/snif ghcr.io/vesvault/snif
+docker logs -f snif
+```
+
+Open the authorization link printed in the log; once authorized, the log
+prints the permanent SNIF hostname, verifiable at
+`https://{snif_host_name}:7357/`. The connector makes outbound connections
+only — no published ports, no port forwarding. The key, cert, and hostname
+persist on the `snif-etc` volume.
+
+See [docker/README.md](docker/README.md) for port mappings, compose examples,
+and end-to-end TLS setups.
+
+
 ## Embed the connector in an app
 
 To integrate SNIF directly instead of running `snif-conn`:
 
 - Use [`lib/cert.h`](lib/cert.h) to allocate the SNIF hostname, generate the
   private key, and issue and renew the certificate.
+- The key algorithm defaults to RSA, and can be set with `snifd -K` (or
+  `SNIF_CONN_KEYALGO` in `snif.conf`, or `snif_cert.keyspec` when embedding):
+  `RSA[:bits]`, `EC[:curve]` (e.g. `EC:P-256`), `ED25519`, or `ED448`. When
+  left unset the CA proxy may steer the choice via an `X-SNIF-KeyAlgo`
+  response header.
 - Open a SNIF control connection to `{snif_host_name}` on TCP port `snif`
   (7123).
 - Use [`lib/conn.h`](lib/conn.h) to send and receive SNIF messages over the
@@ -231,6 +253,7 @@ proxy). It does not need to be embedded in anything else. See
 lib/        SNIF connector libraries (libsnif) source
 snifd/      SNIF daemon source — relay and connector
 ca-proxy/   CA proxy scripts and web API
+snifdog/    CA Transparency watchdog — standalone sub-package
 ```
 
 
@@ -249,14 +272,17 @@ ca-proxy/   CA proxy scripts and web API
 
 ## Specification & security
 
-SNIF is a specified open protocol, first published as the IETF Internet-Draft
+SNIF is a specified open protocol, published as the IETF Internet-Draft
 [draft-zubov-snif](https://datatracker.ietf.org/doc/draft-zubov-snif/)
-("Deploying Publicly Trusted TLS Servers on IoT Devices Using SNI-based
-End-to-End TLS Forwarding"); a revised draft is in preparation. The canonical
-spec lives on the IETF datatracker; a plain-language trust model lives here:
+("Deploying Publicly Trusted TLS Servers on Devices Behind NAT Using SNI-based
+End-to-End TLS Forwarding"). The canonical spec lives on the IETF datatracker;
+a plain-language trust model lives here:
 
 - [security-model.md](security-model.md) — what SNIF protects, the trust
   assumptions, and the threat model.
+- [snifdog/README](snifdog/README) — the CA Transparency watchdog that
+  monitors public CT logs to detect a mis-issued certificate, backstopping
+  the relay-cannot-impersonate guarantee.
 
 To report a vulnerability, see [SECURITY.md](SECURITY.md) — please disclose
 privately, not via public issues.

@@ -33,6 +33,8 @@
 #include <openssl/bio.h>
 #include <openssl/ssl.h>
 #include <openssl/x509.h>
+#include <openssl/ec.h>
+#include <openssl/objects.h>
 #include <openssl/err.h>
 #include <curl/curl.h>
 #include <errno.h>
@@ -83,6 +85,7 @@ static size_t snif_cert_curlhdrfn(void *ptr, size_t size, size_t nmemb, void *st
 	char **pval;
 	if (!strcmp(hkey, "x-snif-cn")) pval = &cert->cn;
 	else if (!strcmp(hkey, "x-snif-authurl")) pval = &cert->authurl;
+	else if ((cert->flags & SNIF_F_KEYSPEC) && !strcmp(hkey, "x-snif-keyalgo")) pval = &cert->ca_keyspec;
 	else pval = NULL;
 	if (pval && !*pval) {
 	    while (v + 1 < tail) if (*++v != ' ') break;
@@ -356,6 +359,9 @@ snif_cert *snif_cert_init_ex(snif_cert *cert, int flags) {
 	cert = malloc(sizeof(snif_cert));
 	if (!cert) return NULL;
 	cert->certfile = cert->pkeyfile = cert->passphrase = cert->initurl = cert->apiurl = NULL;
+	cert->ou = NULL;
+	cert->keyspec = cert->ca_keyspec = NULL;
+	cert->apierr = NULL;
 	cert->rootstore = NULL;
 	cert->biofn = NULL;
 	cert->ctxfn = NULL;
@@ -367,6 +373,10 @@ snif_cert *snif_cert_init_ex(snif_cert *cert, int flags) {
     cert->download_at = 0;
     cert->error = 0;
     cert->flags = flags;
+    /* Only the flag-gated fields are touched here; a caller that did not set
+     * SNIF_F_KEYSPEC may be using an older, shorter struct without ca_keyspec.
+     * .keyspec is caller-owned and left as set (see the struct doc). */
+    if (flags & SNIF_F_KEYSPEC) cert->ca_keyspec = cert->apierr = NULL;
     if (cert->rootstore) cert->alloc_rootstore = NULL;
     else {
 	cert->rootstore = cert->alloc_rootstore = X509_STORE_new();
@@ -397,11 +407,35 @@ int snif_cert_savecrt(snif_cert *cert) {
     return w;
 }
 
+/**************************************************************************
+ * Store (a trimmed copy of) a CA proxy error response body into cert->apierr,
+ * or clear it when buf is NULL / empty. No-op unless SNIF_F_KEYSPEC is set,
+ * as .apierr belongs to the flag-gated appended struct region.
+ **************************************************************************/
+static void snif_cert_setapierr(snif_cert *cert, const char *buf, int len) {
+    if (!(cert->flags & SNIF_F_KEYSPEC)) return;
+    free(cert->apierr);
+    cert->apierr = NULL;
+    if (!buf) return;
+    while (len > 0) {
+	char c = buf[len - 1];
+	if (c != '\n' && c != '\r' && c != ' ' && c != '\t') break;
+	len--;
+    }
+    if (len <= 0) return;
+    char *s = malloc(len + 1);
+    if (!s) return;
+    memcpy(s, buf, len);
+    s[len] = 0;
+    cert->apierr = s;
+}
+
 int snif_cert_download(snif_cert *cert) {
     char buf[1024];
     struct CURL *curl = snif_cert_curlfn(cert);
     struct snif_cert_buf *cbuf = malloc(sizeof(struct snif_cert_buf));
     if (!cbuf) return SNIF_CE_LIB;
+    snif_cert_setapierr(cert, NULL, 0);
     snif_cert_apiurl(cert, buf, ".crt");
     curl_easy_setopt(curl, CURLOPT_URL, buf);
     struct curl_slist *hdrs = curl_slist_append(NULL, "Accept: application/x-x509-ca-cert, application/pkix-cert");
@@ -445,6 +479,7 @@ int snif_cert_download(snif_cert *cert) {
 		    break;
 		default:
 		    cert->error = SNIF_CE_API;
+		    snif_cert_setapierr(cert, cbuf->buf, cbuf->len);
 		    break;
 	    }
 	    rs = 0;
@@ -457,6 +492,115 @@ int snif_cert_download(snif_cert *cert) {
     if (rs <= 0) cert->download_at = time(NULL) + (cert->ctx ? SNIF_CERT_RECHECK : SNIF_CERT_RETRY);
     snif_cert_savecrt(cert);
     return rs;
+}
+
+/**************************************************************************
+ * Parse a "ALGO[:PARAM]" key spec into a normalized (type, param) pair.
+ * A NULL or empty spec resolves to RSA at SNIF_CERT_RSA_BITS.
+ * Returns 1 on a supported spec, 0 otherwise.
+ **************************************************************************/
+struct snif_cert_algo {
+    int type;
+    int param;		/* RSA: key bits; EC: curve NID; EdDSA: unused */
+};
+
+static int snif_cert_parsealgo(const char *spec, struct snif_cert_algo *a) {
+    char algo[16];
+    const char *param = NULL;
+    if (spec) {
+	const char *c = strchr(spec, ':');
+	size_t al = c ? (size_t)(c - spec) : strlen(spec);
+	if (al >= sizeof(algo)) return 0;
+	size_t i;
+	for (i = 0; i < al; i++) {
+	    char ch = spec[i];
+	    algo[i] = (ch >= 'a' && ch <= 'z') ? ch & ~0x20 : ch;
+	}
+	algo[al] = 0;
+	if (c && c[1]) param = c + 1;
+    } else {
+	algo[0] = 0;
+    }
+    if (!algo[0] || !strcmp(algo, "RSA")) {
+	a->type = EVP_PKEY_RSA;
+	a->param = param ? atoi(param) : SNIF_CERT_RSA_BITS;
+	return a->param >= 512;
+    }
+    if (!strcmp(algo, "EC") || !strcmp(algo, "ECDSA")) {
+	int nid = NID_undef;
+	if (!param) nid = NID_X9_62_prime256v1;
+	else {
+#if	(OPENSSL_VERSION_NUMBER >= 0x10002000L)
+	    nid = EC_curve_nist2nid(param);
+	    if (nid == NID_undef)
+#endif
+	    nid = OBJ_txt2nid(param);
+	}
+	if (nid == NID_undef) return 0;
+	a->type = EVP_PKEY_EC;
+	a->param = nid;
+	return 1;
+    }
+#if	(OPENSSL_VERSION_NUMBER >= 0x10101000L)
+    if (!strcmp(algo, "ED25519")) { a->type = EVP_PKEY_ED25519; a->param = 0; return 1; }
+    if (!strcmp(algo, "ED448")) { a->type = EVP_PKEY_ED448; a->param = 0; return 1; }
+#endif
+    return 0;
+}
+
+/**************************************************************************
+ * Generate a fresh EVP_PKEY for a parsed key spec. *pmd receives the digest
+ * to pass to X509_sign()/X509_REQ_sign() (NULL for the single-shot EdDSA
+ * algorithms, where the digest is implied by the key).
+ * Returns a new EVP_PKEY * (free with EVP_PKEY_free), or NULL on failure.
+ **************************************************************************/
+static EVP_PKEY *snif_cert_genpkey(const struct snif_cert_algo *a, const EVP_MD **pmd) {
+    EVP_PKEY *pkey = NULL;
+    if (pmd) *pmd = EVP_sha256();
+    switch (a->type) {
+	case EVP_PKEY_RSA: {
+	    BIGNUM *e = BN_new();
+	    RSA *rsa = RSA_new();
+	    if (e && rsa && BN_set_word(e, 0x10001) > 0
+		&& RSA_generate_key_ex(rsa, a->param, e, NULL) > 0
+		&& (pkey = EVP_PKEY_new()) && EVP_PKEY_assign_RSA(pkey, rsa) > 0) {
+		rsa = NULL;
+	    } else if (pkey) {
+		EVP_PKEY_free(pkey);
+		pkey = NULL;
+	    }
+	    if (rsa) RSA_free(rsa);
+	    if (e) BN_free(e);
+	    break;
+	}
+	case EVP_PKEY_EC: {
+	    EC_KEY *ec = EC_KEY_new_by_curve_name(a->param);
+	    if (ec && EC_KEY_generate_key(ec) > 0) {
+		EC_KEY_set_asn1_flag(ec, OPENSSL_EC_NAMED_CURVE);
+		if ((pkey = EVP_PKEY_new()) && EVP_PKEY_assign_EC_KEY(pkey, ec) > 0) {
+		    ec = NULL;
+		} else if (pkey) {
+		    EVP_PKEY_free(pkey);
+		    pkey = NULL;
+		}
+	    }
+	    if (ec) EC_KEY_free(ec);
+	    break;
+	}
+#if	(OPENSSL_VERSION_NUMBER >= 0x10101000L)
+	case EVP_PKEY_ED25519:
+	case EVP_PKEY_ED448: {
+	    EVP_PKEY_CTX *pctx = EVP_PKEY_CTX_new_id(a->type, NULL);
+	    if (pctx && EVP_PKEY_keygen_init(pctx) > 0 && EVP_PKEY_keygen(pctx, &pkey) <= 0) pkey = NULL;
+	    if (pctx) EVP_PKEY_CTX_free(pctx);
+	    if (pmd) *pmd = NULL;
+	    break;
+	}
+#endif
+	default:
+	    break;
+    }
+    return pkey;
 }
 
 void *snif_cert_pkey(snif_cert *cert) {
@@ -475,13 +619,19 @@ void *snif_cert_pkey(snif_cert *cert) {
 	}
     }
     if (!cert->pkey && cert->initurl) {
-	BIGNUM *e = BN_new();
-	BN_set_word(e, 0x10001);
-	RSA *rsa = RSA_new();
+	/* snif_cert_alloccn() contacts the CA proxy init origin; its response
+	 * may carry an X-SNIF-KeyAlgo header into cert->ca_keyspec, so it must
+	 * run before the effective key spec is resolved below. */
 	const char *cn = snif_cert_alloccn(cert);
-	if (cn && RSA_generate_key_ex(rsa, SNIF_CERT_RSA_BITS, e, NULL) > 0) {
-	    EVP_PKEY *pkey = EVP_PKEY_new();
-	    EVP_PKEY_assign_RSA((EVP_PKEY *) pkey, rsa);
+	const char *spec = SNIF_CERT_KEYSPEC;
+	if (cert->flags & SNIF_F_KEYSPEC)
+	    spec = cert->keyspec ? cert->keyspec
+		: (cert->ca_keyspec ? cert->ca_keyspec : SNIF_CERT_KEYSPEC);
+	struct snif_cert_algo algo;
+	const EVP_MD *md = NULL;
+	EVP_PKEY *pkey = NULL;
+	if (cn && snif_cert_parsealgo(spec, &algo)) pkey = snif_cert_genpkey(&algo, &md);
+	if (pkey) {
 	    X509_REQ *req = X509_REQ_new();
 	    X509 *pcrt = X509_new();
 	    if (X509_REQ_set_pubkey(req, pkey) > 0
@@ -498,8 +648,8 @@ void *snif_cert_pkey(snif_cert *cert) {
 #endif
 		&& ASN1_INTEGER_set(X509_get_serialNumber(pcrt), 1) > 0
 		&& X509_REQ_set_version(req, 0) > 0
-		&& X509_REQ_sign(req, pkey, EVP_sha256()) > 0
-		&& X509_sign(pcrt, pkey, EVP_sha256()) > 0
+		&& X509_REQ_sign(req, pkey, md) > 0
+		&& X509_sign(pcrt, pkey, md) > 0
 		&& snif_cert_sendreq(cert, req)
 	    ) {
 		BIO *bio = snif_cert_bio(cert, cert->certfile, 1);
@@ -524,10 +674,8 @@ void *snif_cert_pkey(snif_cert *cert) {
 	    X509_REQ_free(req);
 	    X509_free(pcrt);
 	} else {
-	    RSA_free(rsa);
 	    cert->error = (snif_cert_TLSERR(cert), SNIF_CE_LIB);
 	}
-	BN_free(e);
     }
     return cert->pkey;
 }
@@ -617,6 +765,12 @@ void snif_cert_reset(snif_cert *cert) {
     cert->cn = cert->hostname = NULL;
     free(cert->authurl);
     cert->authurl = NULL;
+    if (cert->flags & SNIF_F_KEYSPEC) {
+	free(cert->ca_keyspec);
+	cert->ca_keyspec = NULL;
+	free(cert->apierr);
+	cert->apierr = NULL;
+    }
     free(cert->unsaved);
     cert->unsaved = NULL;
     if (cert->alloc_rootstore) X509_STORE_free(cert->alloc_rootstore);

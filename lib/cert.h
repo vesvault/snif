@@ -38,6 +38,16 @@
  *               NULL for default
  *   .ctxfn    - SSL_CTX initialization callback for curl,
                  NULL for default
+ *
+ * The trailing .keyspec / .ca_keyspec fields are only accessed when the
+ * SNIF_F_KEYSPEC flag is passed to snif_cert_init_ex() - see SNIF_F_KEYSPEC.
+ *   .keyspec  - Connector key algorithm, "ALGO[:PARAM]", NULL for default.
+ *               "RSA[:bits]" (e.g. "RSA:4096"), "EC[:curve]" (e.g. "EC:P-256"
+ *               / "EC:prime256v1"), "ED25519", "ED448". When NULL the CA proxy
+ *               may steer the choice via an X-SNIF-KeyAlgo response header;
+ *               absent that, SNIF_CERT_KEYSPEC (RSA:SNIF_CERT_RSA_BITS) is used.
+ *               A non-NULL value here always overrides the CA proxy hint.
+ *               Set it after snif_cert_init_ex(cert, SNIF_F_KEYSPEC | ...).
  **************************************************************************/
 typedef struct snif_cert {
     const char *certfile;
@@ -67,17 +77,43 @@ typedef struct snif_cert {
 	short int ctxdepth;
     } tlserr;
     struct snif_cert_buf *unsaved;
+    /* Appended fields, gated by SNIF_F_KEYSPEC for binary compatibility with
+     * callers built against an older struct layout. Do not insert above here. */
+    const char *keyspec;
+    char *ca_keyspec;
+    /* Output: human-readable error message from the CA proxy for a terminal
+     * issuance failure (the response body), or NULL. See snif_cert_apierr(). */
+    char *apierr;
 } snif_cert;
 
 #define	SNIF_F_LEGACY		0x0001
+/**************************************************************************
+ * Enable the appended .keyspec / .ca_keyspec fields. A caller that sets this
+ * flag asserts the struct was built against a header that includes them (and,
+ * for a caller-provided struct, that it is large enough to hold them). Without
+ * this flag those trailing fields are never touched, so an app compiled against
+ * an older, shorter struct layout stays binary compatible.
+ **************************************************************************/
+#define	SNIF_F_KEYSPEC		0x0002
 #define	SNIF_F_DIAGS		0x4000
 #define	SNIF_F_DEBUG		0x8000
 
 /**************************************************************************
- * RSA private key bits
+ * RSA private key bits (used when the effective key algorithm is RSA and no
+ * explicit bit count is given in the key spec).
  **************************************************************************/
 #ifndef	SNIF_CERT_RSA_BITS
 #define	SNIF_CERT_RSA_BITS	4096
+#endif
+
+/**************************************************************************
+ * Default connector key algorithm spec, "ALGO[:PARAM]", or NULL to default
+ * to RSA at SNIF_CERT_RSA_BITS. Overridden per-session by snif_cert.keyspec,
+ * or steered by an X-SNIF-KeyAlgo response header from the CA proxy.
+ * Supported: "RSA[:bits]", "EC[:curve]", "ED25519", "ED448".
+ **************************************************************************/
+#ifndef	SNIF_CERT_KEYSPEC
+#define	SNIF_CERT_KEYSPEC	NULL
 #endif
 
 /**************************************************************************
@@ -199,6 +235,16 @@ void *snif_cert_ctx(struct snif_cert *cert);
  * Do not deallocate.
  **************************************************************************/
 #define snif_cert_authurl(cert)	((cert)->authurl)
+
+/**************************************************************************
+ * Get a human-readable error message returned by the CA proxy for a failed
+ * certificate issuance (the HTTP body of a terminal error response), or NULL
+ * if none. Useful to communicate why snif_cert_ctx() keeps failing without an
+ * authurl (e.g. the CA cannot issue for the requested key algorithm).
+ * Only populated when SNIF_F_KEYSPEC is set (this is part of the appended,
+ * flag-gated struct region). Do not deallocate.
+ **************************************************************************/
+#define snif_cert_apierr(cert)	((cert)->apierr)
 
 /**************************************************************************
  * Get an instantiated SSL * for the current cert.

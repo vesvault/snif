@@ -1,1 +1,2 @@
 *.sh linguist-detectable=false
+docker/*.sh text eol=lf

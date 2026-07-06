@@ -52,6 +52,15 @@ if ($cn == '') {
     }
     $wc = file_exists("$EtcDir/$d.tsig") ? "*." : "";
     header("X-SNIF-CN: $wc$cn");
+    # Optional server-side key algorithm policy: a per-base-domain etc/<d>.keyalgo
+    # or the server-wide etc/keyalgo (one line, e.g. "EC:P-256"). Returned here,
+    # alongside X-SNIF-CN, so the connector reads it before it generates its key.
+    # The certificate private key is never seen by the proxy - this only steers
+    # the connector's local key generation and is not persisted per hostname.
+    $keyalgo = @file_get_contents(file_exists("$EtcDir/$d.keyalgo") ? "$EtcDir/$d.keyalgo" : "$EtcDir/keyalgo");
+    if ($keyalgo !== false && preg_match('/^[A-Za-z0-9][A-Za-z0-9:._\-]*/', trim($keyalgo), $km)) {
+	header("X-SNIF-KeyAlgo: $km[0]");
+    }
     header("Content-Type: text/plain");
     echo $wc;
     echo $cn;
@@ -76,7 +85,17 @@ if (isset($_POST['cf-turnstile-response']) || isset($_SERVER['HTTP_X_SNIF_CAPTCH
     require "$BaseDir/inc/snif-auth-ves.php";
     $auth = snif_auth_ves();
     if (!isset($auth)) {
-	header("Location: $AuthPageUrl" . "https://" . $_SERVER['HTTP_HOST'] . $_SERVER['REQUEST_URI']);
+	# No credential presented: hand off to the interactive authorization page.
+	# When the central Turnstile account is configured (etc/turnstile.sitekey
+	# paired with the etc/turnstile.secret the captcha verifier checks against)
+	# the page presents Turnstile, so its token verifies against the same
+	# account. Absent either half, it defaults to VES.
+	$loc = $AuthPageUrl . "https://" . $_SERVER['HTTP_HOST'] . $_SERVER['REQUEST_URI'];
+	$sitekey = @trim(file_get_contents("$EtcDir/turnstile.sitekey"));
+	if ($sitekey && file_exists("$EtcDir/turnstile.secret")) {
+	    $loc .= '&sitekey=' . rawurlencode($sitekey);
+	}
+	header("Location: $loc");
 	exit;
     }
     if (!$auth) {

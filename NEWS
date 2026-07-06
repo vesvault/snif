@@ -1,0 +1,34 @@
+snif NEWS -- history of user-visible changes
+
+Version 1.03
+------------
+
+* snifdog: new CA Transparency watchdog (M1), a standalone sub-package that
+  monitors public CT logs for certificates issued under a SNIF namespace and
+  validates them against name-bound CSRs, backstopping the relay-cannot-
+  impersonate guarantee. Ships its own configure.ac; see snifdog/README.
+  Includes a first-run crt.sh history backfill with incremental checkpointing
+  and transient-failure backoff.
+
+* docker: official SNIF Connector container image (Dockerfile + docker/); the
+  image is published to GHCR automatically on each version tag.
+
+* cert: the connector key algorithm is now configurable, and the CA proxy may
+  steer the choice via an X-SNIF-KeyAlgo response header.
+
+* cert: CA proxy issuance errors are delivered to the connector instead of
+  hanging on an endless 503.
+
+* ca-proxy: the Turnstile sitekey is server-pinned; added a mkdirs bootstrap
+  script.
+
+Version 1.02
+------------
+
+* Live in-browser demo (wasm connector + CA-proxy captcha issuance path),
+  comparison table.
+
+Version 1.01
+------------
+
+* Relicensed to Apache-2.0; added CI, a security policy, and community docs.

@@ -1,0 +1,144 @@
+.\" Man page for snifdog, the SNIF CA Transparency watchdog.
+.\" Keep in sync with the usage() text in snifdog/bin/snifdog, snifdog/README,
+.\" and snifdog/DESIGN.md.  Version: $VERSION in bin/snifdog.
+.TH SNIFDOG 8 "2026-07-05" "snifdog 0.1" "SNIF Manual"
+.SH NAME
+snifdog \- SNIF Certificate Transparency watchdog
+.SH SYNOPSIS
+.B snifdog pin
+.I name
+.RB [ \-\-from
+.IR cert " | " \-\-spki
+.IR hex ]
+.RB [ \-\-issuer
+.IR s ]
+.br
+.B snifdog poll
+.br
+.B snifdog watch
+.br
+.B snifdog list
+.br
+.B snifdog help
+.SH DESCRIPTION
+.B snifdog
+monitors public Certificate Transparency (CT) logs for certificates issued under
+a SNIF namespace and alerts on any certificate for a SNIF name whose
+SubjectPublicKeyInfo (SPKI) is not the key the legitimate device holds. It turns
+SNIF security\-model guarantee #3 \(em that relay or CA misbehavior is publicly
+detectable via CT \(em from a claim into a running detector.
+.PP
+Because SNIF binds one key to one name for life (a device never re\-keys; a new
+key gets a new
+.I snif\-xxxx
+name), a name's SPKI is immutable. snifdog pins the SHA\-256 of the DER SPKI (the
+RFC 7469 construction): a legitimate renewal (same key, new serial) is silent,
+while a key\-substitution impersonation fires immediately. There is no rotation
+false\-positive class.
+.PP
+Run co\-located with the SNIF CA proxy (its
+.I csr/
+store present), snifdog additionally validates each certificate against the one
+CSR the proxy keyed for the name \(em proven ground truth, per name \(em rather
+than trusting the first cert seen.
+.SH COMMANDS
+.TP
+.BI "pin " name " " [options]
+Anchor a name's SPKI explicitly \(em the strongest anchor, needing no relay, CA,
+or first\-use trust.
+.RS
+.TP
+.BI \-\-from " cert"
+Read the SPKI from a certificate file (PEM or DER). If
+.I name
+is omitted it is taken from the certificate's SANs. Defaults to the local
+connector certificate when neither
+.B \-\-from
+nor
+.B \-\-spki
+is given.
+.TP
+.BI \-\-spki " hex"
+Pin a SHA\-256 SPKI hash directly, as 64 hex characters.
+.TP
+.BI \-\-issuer " s"
+Record an expected issuer string with the pin.
+.RE
+.TP
+.B poll
+One incremental CT pass, intended for cron. Exits
+.B 2
+if a new alert was raised this pass.
+.TP
+.B watch
+Long\-running loop; polls every
+.I SNIFDOG_POLL_INTERVAL
+seconds.
+.TP
+.B list
+Print the pin database.
+.TP
+.B help
+Print a usage summary.
+.SH MODES
+The run mode is set by
+.I SNIFDOG_MODE
+in the configuration:
+.TP
+.B watch
+Independent watcher (default). Alerts on any observed SPKI outside the pin set;
+needs no access to relay or CA\-proxy data, so a device owner or a third party can
+run it. This is the configuration that actually delivers guarantee #3.
+.TP
+.B reconcile
+Operator enrichment, co\-located with the CA proxy: cross\-checks observations
+against the CA\-proxy CSR set to auto\-classify the operator's own reissues.
+.TP
+.B both
+Watch semantics enriched with the CSR\-set cross\-check.
+.SH EXIT STATUS
+.TP
+.B 0
+No alert.
+.TP
+.B 2
+.RB ( poll )
+A new alert was raised this pass.
+.TP
+.B non\-zero
+A fetch or configuration error occurred.
+.SH ENVIRONMENT
+.TP
+.I SNIFDOG_CONF
+Path to the configuration file (default
+.IR /etc/snif/snifdog.conf ).
+.SH FILES
+.TP
+.I /etc/snif/snifdog.conf
+Configuration: namespace, CT source, mode, alert sinks.
+.TP
+.I /etc/snif/snif.conf
+SNIF relay configuration, sourced for
+.IR SNIF_CA_PROXY .
+.TP
+.I /var/lib/snif/snifdog/pins/
+One SPKI pin record per watched name.
+.TP
+.I /var/lib/snif/snifdog/var/
+Per\-source cursor and the already\-alerted cache.
+.TP
+.I /var/lib/snif/snifdog/evidence/
+Per\-detection evidence bundles.
+.SH SEE ALSO
+.BR snifd (8),
+.BR snif\-conn (1)
+.PP
+The full design note ships as
+.I DESIGN.md
+alongside this tool. SNIF home page:
+.IR https://snif.host
+.SH AUTHOR
+Jim Zubov <jz@vesvault.com>, VESvault Corp.
+.SH COPYRIGHT
+Copyright \(co 2021\-2026 VESvault Corp. Licensed under the Apache License,
+Version 2.0.

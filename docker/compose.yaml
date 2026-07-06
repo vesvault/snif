@@ -1,0 +1,26 @@
+# SNIF Connector + a web app, with TLS terminated by the connector.
+# The plaintext never leaves the compose-internal network.
+#
+#   docker compose up -d && docker compose logs -f snif
+#
+# Open the authorization link printed in the log; once authorized, the log
+# prints the permanent SNIF hostname, and the web app is reachable at
+# https://{snif_hostname}/ from anywhere.
+#
+# For TLS terminated by the app itself (true end-to-end), see docker/README.md
+
+services:
+  snif:
+    image: ghcr.io/vesvault/snif
+    volumes:
+      - snif-etc:/etc/snif
+    environment:
+      SNIF_CONN_PORTS: "443:web:^80"
+    restart: unless-stopped
+
+  web:
+    image: nginx:alpine
+    restart: unless-stopped
+
+volumes:
+  snif-etc:

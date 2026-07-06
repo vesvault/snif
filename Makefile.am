@@ -39,6 +39,8 @@ snifd_snifd_LDADD = lib/libsnif.la -lssl -lcrypto
 
 snifd_snifd_SOURCES = $(SNIFD_CFILES) $(SNIFD_HFILES)
 
+dist_man_MANS = snifd/snifd.8 bin/snif-conn.1
+
 snifd_etcdir = /etc/snif
 
 install-data-hook:

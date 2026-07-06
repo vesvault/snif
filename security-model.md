@@ -27,7 +27,10 @@ disagree.
 3. **The relay cannot silently impersonate the device.** It cannot produce a
    certificate matching the device's private key. Any certificate mis-issued
    for the device's hostname appears in public **Certificate Transparency**
-   logs, making relay or CA misbehavior **publicly detectable**.
+   logs, making relay or CA misbehavior **publicly detectable** — and
+   [`snifdog`](snifdog/README) is the shipped watchdog that performs the
+   detection, alerting on any CT-logged certificate for a SNIF name whose
+   public key the device does not hold.
 4. **Tampering fails closed.** If an attacker alters the CN allocation, the CSR
    submission, or the certificate download responses, the connector ends up
    without a certificate that matches its key and must hard-reset — it does not
@@ -38,7 +41,12 @@ disagree.
 
 - The **CA** behind the CA proxy issues certificates correctly, and CT logs are
   monitored. SNIF's detectability guarantee rests on CT, not on trusting the
-  relay.
+  relay. The monitoring half of this assumption is discharged by
+  [`snifdog`](snifdog/README): because SNIF binds one key to one name for life,
+  a name's public key is immutable, so `snifdog` pins each name's SPKI and any
+  conflicting key in CT is an unambiguous mis-issuance. Run in independent
+  `watch` mode it trusts neither the relay nor the CA-proxy operator, so a
+  device owner or a third party can verify the guarantee directly.
 - The **client** validates the server certificate as it would for any HTTPS
   endpoint. SNIF provides a publicly trusted certificate precisely so existing
   clients need no special trust configuration.

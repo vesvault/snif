@@ -44,6 +44,19 @@ etc/{SNIF_initialization_domain}.domains contains the list of {domain} names
 etc/{SNIF_domain}.tsig must contain a DDNS TSIG that permits managing IN TXT
     RRs for snif-pool.{SNIF_domain} for CA domain verification.
 
+etc/turnstile.secret and etc/turnstile.sitekey enable the optional Cloudflare
+    Turnstile CAPTCHA authorization for the interactive certificate
+    authorization page (the in-browser counterpart of VES vaultItem auth).
+    turnstile.secret holds the Turnstile secret key; its presence enables the
+    CAPTCHA verification in inc/snif-auth-captcha.php, which checks each token
+    against it. turnstile.sitekey holds the matching public site key. When BOTH
+    files are present the authorization page defaults to a Turnstile challenge,
+    whose token is verified against the paired secret; if either is absent the
+    page defaults to VES vaultItem authorization. Cloudflare provides a test
+    site/secret pair that always passes (1x00000000000000000000AA and
+    1x0000000000000000000000000000000AA) for local testing. To use your own
+    Turnstile account, replace both files with a matching site/secret pair.
+
 snif-certd daemon needs to be launched on the server start to process
     the certificate issuance for SNIF connectors.
 

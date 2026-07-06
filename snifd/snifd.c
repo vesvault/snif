@@ -162,6 +162,7 @@ int main(int argc, char **argv, char **env) {
 	.cn = NULL,
 	.hostname = NULL,
 	.ou = NULL,
+	.keyspec = NULL,
 	.ctx = NULL,
 	.ssl = NULL,
 	.pkey = NULL
@@ -182,7 +183,7 @@ int main(int argc, char **argv, char **env) {
     int i;
     const char *host, *port;
     char *snifhost = NULL;
-    int certflags = SNIF_F_LEGACY;
+    int certflags = SNIF_F_LEGACY | SNIF_F_KEYSPEC;
     for (i = 1; i < argc; i++) {
 	const char *a = argv[i];
 	if (a[0] == '-') {
@@ -249,6 +250,12 @@ int main(int argc, char **argv, char **env) {
 		    snifd_CHKV(cert.apiurl)
 		    snifd_CHKA(++i)
 		    cert.apiurl = argv[i];
+		    break;
+		case 'K':
+		    snifd_CHKR()
+		    snifd_CHKV(cert.keyspec)
+		    snifd_CHKA(++i)
+		    cert.keyspec = argv[i];
 		    break;
 		case 'd':
 		    waitf = 1;
@@ -347,6 +354,10 @@ int main(int argc, char **argv, char **env) {
 	    printf("Authorization required (use -d to silently retry):\n%s\n", cert.authurl);
 	    break;
 	case E_TLS: {
+	    if (snif_cert_apierr(&cert)) {
+		fprintf(stderr, "Certificate issuance failed (use -d to silently retry):\n%s\n", snif_cert_apierr(&cert));
+		break;
+	    }
 	    fprintf(stderr, "TLS error (use -d to silently retry)\n");
 	    if (cert.tlserr.line) fprintf(stderr, "  %d (ctx %d %d): %s\n", cert.tlserr.line, cert.tlserr.ctxcode, cert.tlserr.ctxdepth, ERR_error_string(cert.tlserr.code, NULL));
 	    long e;

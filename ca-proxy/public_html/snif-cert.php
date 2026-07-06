@@ -94,11 +94,23 @@ if ($_SERVER['REQUEST_URI'] == "/snif-cert/$Domain.csr") {
     set_time_limit(2);
     $w = 0;
     $fd = fopen("$BasePath/var/snif-certd.ctl", "w");
-    stream_set_blocking($fd, false);
     if ($fd) {
+	stream_set_blocking($fd, false);
 	$buf = "SNIF CERT $Domain\r\n";
 	$w = fwrite($fd, $buf, strlen($buf));
 	if (!fclose($fd)) $w = 0;
+    }
+    # A prior issuance attempt recorded a terminal error: deliver it to the client
+    # (distinct status + message) rather than an endless 503 "still working". The
+    # certd nudge above still lets a later attempt clear the error and succeed.
+    $err_file = "$CrtPath/$Domain.err";
+    if (file_exists($err_file)) {
+	$msg = trim(@file_get_contents($err_file));
+	if ($msg === '' || $msg === false) $msg = 'Certificate issuance failed';
+	header('HTTP/1.0 422 Unprocessable Entity');
+	header('Content-Type: text/plain');
+	echo $msg, "\n";
+	exit;
     }
     if ($w) {
 	header('HTTP/1.0 503 Service Unavailable');

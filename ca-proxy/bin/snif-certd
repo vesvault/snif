@@ -50,11 +50,29 @@ sub flog {
     dlog($log, $tag . ': ' . ($f? 'OK' : 'ERROR') . ($er ? ' ' . $er : ''));
 }
 
+# Persist a terminal issuance error for $domain so the HTTP endpoint can deliver
+# it to the client (as a distinct status + message) instead of an endless 503.
+# Written atomically; cleared by getcert() once a cert is successfully stored.
+sub seterr {
+    my ($domain, $msg) = @_;
+    return if !$domain;
+    $msg =~ s/[\r\n]+/ /g;
+    $msg =~ s/\s+$//;
+    if (open(my $e, '>', "$CertDir/$domain.err+")) {
+	print $e "$msg\n";
+	close($e) && rename("$CertDir/$domain.err+", "$CertDir/$domain.err");
+    }
+}
+
 sub lelog {
     my ($log, $le, $rs, $tag) = @_;
     my $ok = ($rs == Crypt::LE::OK);
-    flog($log, $ok, $tag, ($ok ? '' : $le->error_details()));
-    close $log if !$ok;
+    my $er = $ok ? '' : $le->error_details();
+    flog($log, $ok, $tag, $er);
+    if (!$ok) {
+	seterr($ErrDomain, "$tag: " . ($er || 'issuance failed'));
+	close $log;
+    }
     return $ok;
 }
 
@@ -63,6 +81,7 @@ sub getcert {
     return -1 if (-e("$CertDir/$domain.crt") && (stat("$CertDir/$domain.crt"))[9] > time - 86400);
     return -2 if (-e("$LogDir/$domain.log") && (stat("$LogDir/$domain.log"))[9] > time - 3600);
     open LOG, ">>$LogDir/$domain.log";
+    $ErrDomain = $domain;
     my $base = base_domain($domain);
     $mode = $base && -f("$EtcDir/$base.tsig") ? 'dns' : 'http';
     my $le = new Crypt::LE(live => $Live, ua => $UserAgent);
@@ -85,12 +104,19 @@ sub getcert {
 	print CRT $chain;
 	if (close CRT) {
 	    unlink "$CertDir/$domain.crt";
-	    rename("$CertDir/$domain.crt+", "$CertDir/$domain.crt") || flog(LOG, 0, "rename");
+	    if (rename("$CertDir/$domain.crt+", "$CertDir/$domain.crt")) {
+		unlink "$CertDir/$domain.err";
+	    } else {
+		flog(LOG, 0, "rename");
+		seterr($domain, "rename: could not store the issued certificate");
+	    }
 	} else {
 	    flog(LOG, 0, "write");
+	    seterr($domain, "write: could not store the issued certificate");
 	}
     } else {
 	flog(LOG, 0, "certificate");
+	seterr($domain, "certificate: no certificate was issued");
     }
     close(LOG) || return -3;
     return 0;

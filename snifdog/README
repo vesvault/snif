@@ -1,0 +1,203 @@
+/**************************************************************************
+ *     _________
+ *    /````````_\                  S N I F ~ e2e TLS trust for IoT
+ *   /\     , / O\      ___
+ *  | |     | \__|_____/  o\       e2e TLS SNI Forwarder
+ *  | |     |  ``/`````\___/       e2e TLS CA Proxy
+ *  | |     | . | <"""""""~~
+ *  |  \___/ ``  \________/        https://snif.host
+ *   \  '''  ``` /````````         (C) 2021-2026 VESvault Corp
+ *    \_________/                  Jim Zubov <jz@vesvault.com>
+ *
+ *
+ * Apache License, Version 2.0
+ * You may use, copy, modify, merge, publish, distribute and/or sell copies
+ * of the Software under the terms of the Apache License, Version 2.0, a copy
+ * of which is provided in the COPYING file, or http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * This software is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR
+ * CONDITIONS OF ANY KIND, either express or implied.
+ *
+ **************************************************************************/
+
+
+snifdog -- the SNIF CA Transparency watchdog
+
+
+WHY IT EXISTS
+
+SNIF's security model makes one load-bearing promise (guarantee #3): the relay
+cannot silently impersonate a device, because any certificate mis-issued for a
+SNIF hostname appears in public Certificate Transparency (CT) logs, making relay
+or CA misbehavior publicly detectable. That promise rests on CT actually being
+monitored. snifdog is the monitor -- it turns "publicly detectable" into a
+running detector that barks. Without it, guarantee #3 is a claim; with it, it is
+an operating control.
+
+
+WHAT IT DETECTS
+
+A publicly-trusted certificate issued for a SNIF hostname or wildcard whose
+private key the legitimate device does not hold -- a rogue/coerced public CA, a
+compromised relay standing up its own ACME flow, or any mis-issuance in the SNIF
+namespace. It does not try to detect device/key compromise or app-layer attacks.
+
+
+HOW IT WORKS -- pin the SPKI, not the fingerprint
+
+SNIF binds one key to one name for life: a device never re-keys; a new key gets
+a new snif-xxxx name (the cert path reuses the stored CSR on every renewal). So
+a name's SubjectPublicKeyInfo (SPKI) is immutable -- across the ~75-day renewal
+cycle only the serial and validity window change. snifdog therefore pins the
+SHA-256 of the DER SPKI (the RFC 7469 construction):
+
+  - a legitimate renewal (same key, new serial)         -> silent, no alarm
+  - a key-substitution impersonation (same name, new key) -> fires immediately
+
+There is no legitimate re-key, so there is no rotation false-positive class.
+
+
+RUN MODES  (config SNIFDOG_MODE)
+
+  watch      Independent watcher (default). Watches CT for the namespace and
+             alerts on any observed SPKI outside the pin set. Needs no access to
+             the CA-proxy ledger, so a device owner or an unrelated third party
+             can run it -- trusting neither the relay nor the CA-proxy operator.
+             This is the only configuration that actually delivers guarantee #3.
+
+  reconcile  Operator enrichment, co-located with the CA proxy. Cross-checks
+             every CT observation against the CA-proxy CSR set (csr/ under
+             $SNIF_CA_PROXY) to auto-classify the operator's own reissues and
+             catch external-CA compromise. (csr/ is the authoritative key set:
+             the proxy issues every cert from its csr/<name>.csr and never
+             re-keys, so csr/ already holds every legitimate key -- the delivered
+             crt//arc/ certs add nothing and are not consulted.) A malicious
+             operator can silence their own snifdog, so this complements
+             independent watchers.
+
+  both       watch semantics enriched with the CSR-set cross-check.
+
+
+ANCHORING THE PIN SET
+
+  First-seen anchor (default). On first run snifdog scans the full CT history of
+  the namespace and pins one SPKI per name. Since SNIF never re-keys, legitimate
+  history holds exactly one SPKI per name; a differing SPKI later -- on the name
+  or on an overlapping up-level wildcard -- is a collision and alerts. A
+  pre-existing two-SPKI collision in history is reported on the first run.
+
+  Explicit pin (strongest, device side). The device holds its own cert and key,
+  so it can anchor from them directly, needing no relay/ledger/CA trust:
+
+      snifdog pin mydevice.snif-1a2b.snif.xyz --from /etc/snif/snif.crt
+
+  CA-proxy CSR ground truth (relay-operator side). Run co-located with the SNIF
+  CA proxy (SNIF_CA_PROXY set, its csr/ present), snifdog reads the one CSR the
+  proxy keyed for each relay-local name -- csr/<apex>.csr -- as that name's
+  authoritative SPKI. Since a SNIF device never re-keys, that CSR holds the only
+  key the name may ever present, so the operator anchors every device it serves
+  from ground truth it already holds -- no per-device cert, no first-use guess.
+  A first-seen cert matching the CSR is recorded as `csr-verified`. Two things
+  are *proven* mis-issuances and alert immediately, even on a name never seen
+  before: a cert carrying any other key for a relay-local name, and any cert at
+  all for a relay-local device zone the proxy holds no CSR for -- issuance always
+  loads csr/<zone>.csr first, so a cert for an unprovisioned zone was never
+  requested through us. (Infra names listed in SNIFDOG_NAME_ALLOW -- the init
+  domain, pool host, base apex -- are not device zones; snifdog ignores them
+  entirely and they never reach these checks.) This is name-bound (per-name, not
+  an issuer-wide key set) and runs whenever the csr/ store is present, independent
+  of SNIFDOG_MODE -- so it is stronger than, and additive to, the reconcile
+  CSR-set membership cross-check below.
+
+
+ON DETECTION
+
+For each new CT cert whose SANs intersect the watched namespace, snifdog
+extracts the SANs and SPKI hash and:
+
+  0. For a relay-local name (CSR ground truth available): the cert's key differs
+     from that name's CA-proxy CSR, or the proxy holds no CSR for a device zone
+     it is authoritative for -> ALERT immediately, a proven mis-issuance, even if
+     the name was never seen and never anchored.
+  1. SPKI in the pin set for a matching name  -> OK (known-good renewal), silent.
+  2. else, SPKI proven legit by the name's CA-proxy CSR, or (reconcile mode)
+     present in the CA-proxy CSR set -> auto-learn the pin, low-severity notice.
+  3. else -> ALERT: a cert for a SNIF name with an unrecognized key.
+
+An alert emits a structured syslog line (LOG_DAEMON/LOG_CRIT), a non-zero exit
+(so the cron wrapper surfaces it), optional webhook POST and e-mail, and an
+evidence bundle under evidence/ (cert.der / cert.pem / cert.txt / meta.json) --
+proof-grade, because CT is non-repudiable. Duplicate alerts for a bad cert
+lingering in the log are suppressed via var/alerted.
+
+
+CT DATA SOURCE  (config SNIFDOG_SOURCE, pluggable adapters in lib/Snif/CT/)
+
+  certspotter  (default) -- returns cert DER inline and pages via a persistent,
+               monotonic after=<id> issuance cursor. Ideal for a watcher: DER in
+               one call, no second fetch, resumable. An optional API token
+               (SNIFDOG_CERTSPOTTER_TOKEN) raises the free-tier rate limit.
+
+  crtsh        (fallback) -- one whole-history query; the DER for each entry
+               needs a second ?d=<id> fetch. No server cursor, so the "cursor"
+               is a max-seen id high-water mark and each pass re-fetches + diffs.
+
+The pin DB is a pure function of CT history: given the same logs, a full re-scan
+reconstructs the same anchors and collisions. The cursor (var/<source>.cursor)
+is only an optimization -- if the source rejects or has pruned it, snifdog
+restarts from the beginning and reconverges. (M2 will add direct CT log polling
+with STH-signature + Merkle-consistency verification, dropping the aggregator
+trust; M3, connector self-watch.)
+
+
+USAGE
+
+  snifdog pin <name> [--from <cert>|--spki <hex>]   anchor a name's SPKI
+  snifdog poll                                       one incremental pass (cron)
+  snifdog watch                                      long-running loop
+  snifdog list                                       show the pin database
+
+
+REQUIREMENTS
+
+  Perl core (JSON::PP, Sys::Syslog, File::Temp, File::Path, POSIX, MIME::Base64)
+  LWP::UserAgent + LWP::Protocol::https   (HTTPS to the CT source)
+  openssl                                 (DER SPKI SHA-256, RFC 7469 pin)
+
+
+INSTALL / RUN
+
+  snifdog is a standalone sub-package -- it is NOT built or installed by the
+  top-level snif `make install` (like ca-proxy, it ships its own configure.ac).
+  Build and install it on its own, from this directory:
+
+      cd snifdog && ./configure && make install
+
+  That installs bin/snifdog -> /usr/bin, the snifdog.8 man page, the lib/Snif/CT
+  adapters -> /usr/share/snifdog/lib, etc/snifdog.conf -> /etc/snif/, the systemd
+  unit and the cron.d example, and creates /var/lib/snif/snifdog/{pins,var,evidence}. It
+  does not pull in the Perl runtime dependencies (see REQUIREMENTS) -- install
+  those from your distro, e.g. on Debian/Ubuntu:
+
+      apt install libwww-perl liblwp-protocol-https-perl
+
+  Then either enable the systemd unit (snifdog watch) or the cron.d entry
+  (snifdog poll every 15 min) -- not both. Edit /etc/snif/snifdog.conf first
+  (SNIFDOG_BASE, SNIFDOG_MODE, sinks).
+
+
+CONTENTS
+
+  bin/snifdog          watcher: pin / poll / watch / list
+  snifdog.8            man page
+  DESIGN.md            full design note
+  etc/snifdog.conf     configuration (namespace, source, mode, sinks)
+  etc/systemd/         snifdog.service (watch mode)
+  etc/cron.d/          snifdog (poll mode)
+  lib/Snif/CT/         CT source adapters: CertSpotter.pm, CrtSh.pm
+  pins/                one SPKI pin record per watched name/wildcard
+  var/                 per-source cursor + alerted cache (idempotent, cron-safe)
+  evidence/            per-detection evidence bundles
+  mkdirs               create the runtime directories
+
+See DESIGN.md for the full design note.

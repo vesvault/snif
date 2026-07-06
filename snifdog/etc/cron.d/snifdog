@@ -1,0 +1,11 @@
+# snifdog -- SNIF CA Transparency watchdog, cron mode.
+#
+# Run one incremental CT pass every 15 minutes. `snifdog poll` exits non-zero
+# (2) when it raises a NEW alert, so cron mails the run output to MAILTO on a
+# detection (in addition to snifdog's own syslog / webhook / email sinks).
+#
+# Use this instead of the systemd `snifdog watch` unit, not alongside it.
+
+MAILTO=root
+
+*/15 * * * *  snif  /usr/bin/snifdog poll

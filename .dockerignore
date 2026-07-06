@@ -1,0 +1,6 @@
+.git
+.github
+ca-proxy
+_tmp
+*.md
+Dockerfile

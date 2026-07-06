@@ -14,4 +14,4 @@ RewriteRule /*(.*) snif-auth.php/$1
 Header always set Access-Control-Allow-Origin "*"
 Header always set Access-Control-Allow-Methods "GET,POST,PUT,OPTIONS"
 Header always set Access-Control-Allow-Headers "Content-Type, Authorization, X-VES-Authorization, X-SNIF-Captcha"
-Header always set Access-Control-Expose-Headers "X-SNIF-CN, X-SNIF-AuthUrl"
+Header always set Access-Control-Expose-Headers "X-SNIF-CN, X-SNIF-AuthUrl, X-SNIF-KeyAlgo"

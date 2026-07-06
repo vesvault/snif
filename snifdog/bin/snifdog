@@ -1,0 +1,928 @@
+#!/usr/bin/perl
+
+#/**************************************************************************
+# *     _________
+# *    /````````_\                  S N I F ~ e2e TLS trust for IoT
+# *   /\     , / O\      ___
+# *  | |     | \__|_____/  o\       e2e TLS SNI Forwarder
+# *  | |     |  ``/`````\___/       e2e TLS CA Proxy
+# *  | |     | . | <"""""""~~
+# *  |  \___/ ``  \________/        https://snif.host
+# *   \  '''  ``` /````````         (C) 2021-2026 VESvault Corp
+# *    \_________/                  Jim Zubov <jz@vesvault.com>
+# *
+# *
+# * Apache License, Version 2.0
+# * You may use, copy, modify, merge, publish, distribute and/or sell copies
+# * of the Software under the terms of the Apache License, Version 2.0, a copy
+# * of which is provided in the COPYING file, or http://www.apache.org/licenses/LICENSE-2.0
+# *
+# * This software is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR
+# * CONDITIONS OF ANY KIND, either express or implied.
+# *
+# **************************************************************************/
+
+# snifdog -- the SNIF CA Transparency watchdog.
+#
+# Turns SNIF security-model guarantee #3 ("the relay cannot silently impersonate
+# the device -- any mis-issuance appears in public CT logs") from a claim into a
+# running detector. It watches Certificate Transparency for the SNIF namespace
+# and alerts on any certificate for a SNIF name whose SubjectPublicKeyInfo does
+# not match the key the legitimate device holds.
+#
+# Design keystone: SNIF binds one key to one name for life (a device never
+# re-keys; a new key gets a new snif-xxxx name), so a name's SPKI is immutable.
+# We therefore pin the SHA-256 of the DER SPKI (RFC 7469 construction): a
+# legitimate renewal (same key, new serial) is silent; a key-substitution
+# impersonation fires immediately. There is no rotation false-positive class.
+#
+# Commands:
+#   snifdog pin <name> [--from <cert>|--spki <hex>]   anchor a name's SPKI
+#   snifdog poll                                       one incremental pass (cron)
+#   snifdog watch                                      long-running loop
+#   snifdog list                                       show the pin DB
+#
+# See DESIGN.md for the full design note and etc/snifdog.conf for config.
+
+use strict;
+use warnings;
+use FindBin;
+use lib "$FindBin::Bin/../lib";
+use lib '/var/lib/snif/snifdog/lib';
+use lib '/usr/share/snifdog/lib';
+use JSON::PP;
+use Sys::Syslog qw(:standard :macros);
+use File::Temp qw(tempfile);
+use File::Path qw(make_path);
+use POSIX qw(strftime);
+
+our $VERSION = '0.1';
+our %C;			# effective config
+our $NewAlerts = 0;	# alerts newly raised in this pass (drives exit code)
+
+my $DEFAULT_CONF = $ENV{SNIFDOG_CONF} || '/etc/snif/snifdog.conf';
+
+#___________________________________________________________________ config
+
+# Load config by shell-sourcing the SNIF relay conf then the snifdog conf with
+# `set -a` (so every assignment is exported) and reading back the vars we care
+# about. The relay conf is /etc/snif/snif.conf (what the snif-conn/snif-relay
+# binaries source); /etc/snif.conf is kept only as a legacy fallback. This
+# matches the SNIF conf idiom (uppercase SNIF*_ vars, ${VAR} interpolation,
+# space-separated lists) and lets ${SNIF_CA_PROXY} resolve.
+sub load_conf {
+    my ($path) = @_;
+    my %cfg;
+    # Guard each source with [ -r ]: POSIX sh aborts the whole script if `.` is
+    # given a missing file, and the relay conf is legitimately absent for an
+    # independent (device-owner / third-party) watcher with no relay.
+    my $sh = 'set -a; for f in /etc/snif/snif.conf /etc/snif.conf; do if [ -r "$f" ]; then . "$f"; break; fi; done; [ -r "$1" ] && . "$1"; env';
+    my $out = `sh -c '$sh' sh "$path" 2>/dev/null`;
+    for my $line (split /\n/, ($out // '')) {
+	next unless $line =~ /^(SNIFDOG_[A-Z0-9_]+|SNIF_CA_PROXY|SNIF_CONN_CRT|SNIF_CONN_KEY)=(.*)$/;
+	$cfg{$1} = $2;
+    }
+
+    my $dir = $cfg{SNIFDOG_DIR} || '/var/lib/snif/snifdog';
+    %C = (
+	dir          => $dir,
+	base         => $cfg{SNIFDOG_BASE}   || 'snif.xyz',
+	source       => $cfg{SNIFDOG_SOURCE} || 'certspotter',
+	mode         => $cfg{SNIFDOG_MODE}   || 'watch',
+	pins_dir     => $cfg{SNIFDOG_PINS_DIR}     || "$dir/pins",
+	var_dir      => $cfg{SNIFDOG_VAR_DIR}      || "$dir/var",
+	evidence_dir => $cfg{SNIFDOG_EVIDENCE_DIR} || "$dir/evidence",
+	name_allow   => [ split ' ', ($cfg{SNIFDOG_NAME_ALLOW}   || '') ],
+	issuer_allow => [ split ' ', ($cfg{SNIFDOG_ISSUER_ALLOW} || '') ],
+	syslog       => defined $cfg{SNIFDOG_SYSLOG} ? $cfg{SNIFDOG_SYSLOG} : 1,
+	webhook      => $cfg{SNIFDOG_WEBHOOK} || '',
+	email        => $cfg{SNIFDOG_EMAIL}   || '',
+	cs_token     => $cfg{SNIFDOG_CERTSPOTTER_TOKEN} || '',
+	interval     => $cfg{SNIFDOG_POLL_INTERVAL} || 900,
+	ca_proxy     => $cfg{SNIF_CA_PROXY} || '',
+	conn_crt     => $cfg{SNIF_CONN_CRT} || '/etc/snif/snif.crt',
+	backfill     => defined $cfg{SNIFDOG_BACKFILL} ? $cfg{SNIFDOG_BACKFILL} : 1,
+    );
+    $C{use_ledger} = ($C{mode} =~ /reconcile|both/) ? 1 : 0;
+    # Name-bound CSR validation is available when co-located with the CA proxy:
+    # csr/<apex>.csr holds the one key SNIF ever binds to <apex> (a device never
+    # re-keys), so a CT cert for a local relay domain carrying any other key is a
+    # mis-issuance we can *prove* against ground truth -- not a first-use guess.
+    $C{use_csr} = ($C{ca_proxy} && -d "$C{ca_proxy}/csr") ? 1 : 0;
+    return \%C;
+}
+
+sub use_syslog { $C{syslog} && $C{syslog} ne '0' && $C{syslog} ne 'no' }
+
+#___________________________________________________________________ logging
+
+sub ts { strftime('%Y-%m-%dT%H:%M:%SZ', gmtime) }
+
+sub say_log {
+    my ($level, $msg) = @_;
+    printf STDERR "%s [%s] %s\n", ts(), $level, $msg;
+    if (use_syslog()) {
+	my $pri = $level eq 'ALERT' ? LOG_CRIT
+		: $level eq 'NOTICE' ? LOG_NOTICE
+		: $level eq 'ERROR'  ? LOG_ERR
+		: LOG_INFO;
+	syslog($pri, '%s', $msg);
+    }
+}
+
+#___________________________________________________________________ openssl
+
+# SHA-256 of the DER SubjectPublicKeyInfo, lowercase hex -- the RFC 7469 pin.
+# openssl x509 -pubkey | openssl pkey -pubin -outform der | sha256
+sub spki_from_der {
+    my ($der) = @_;
+    return undef unless defined $der && length $der;
+    my ($fh, $tmp) = tempfile('snifdog-XXXXXX', TMPDIR => 1, UNLINK => 0);
+    binmode $fh;
+    print $fh $der;
+    close $fh;
+    my $out = `openssl x509 -inform DER -in "$tmp" -pubkey -noout 2>/dev/null | openssl pkey -pubin -outform DER 2>/dev/null | openssl dgst -sha256 2>/dev/null`;
+    unlink $tmp;
+    return ($out =~ /([0-9a-f]{64})/) ? $1 : undef;
+}
+
+sub spki_from_certfile {
+    my ($path) = @_;
+    for my $form (qw(PEM DER)) {
+	my $out = `openssl x509 -inform $form -in "$path" -pubkey -noout 2>/dev/null | openssl pkey -pubin -outform DER 2>/dev/null | openssl dgst -sha256 2>/dev/null`;
+	return $1 if $out =~ /([0-9a-f]{64})/;
+    }
+    return undef;
+}
+
+sub spki_from_csrfile {
+    my ($path) = @_;
+    for my $form (qw(PEM DER)) {
+	my $out = `openssl req -inform $form -in "$path" -pubkey -noout 2>/dev/null | openssl pkey -pubin -outform DER 2>/dev/null | openssl dgst -sha256 2>/dev/null`;
+	return $1 if $out =~ /([0-9a-f]{64})/;
+    }
+    return undef;
+}
+
+sub sans_from_certfile {
+    my ($path) = @_;
+    my $out = '';
+    for my $form (qw(PEM DER)) {
+	$out = `openssl x509 -inform $form -in "$path" -noout -ext subjectAltName 2>/dev/null`;
+	last if $out;
+    }
+    my @sans;
+    while ($out =~ /DNS:([A-Za-z0-9*._-]+)/g) { push @sans, $1 }
+    return @sans;
+}
+
+#___________________________________________________________________ namespace
+
+# Is $s inside the watched base namespace at all?
+sub in_base {
+    my ($s) = @_;
+    return $s eq $C{base} || $s =~ /\.\Q$C{base}\E$/;
+}
+
+# Is $s a legitimately allocatable SNIF device name? SNIF issues wildcard certs
+# for per-device zones `*.snif-<id>.<base>` (and the zone apex `snif-<id>.<base>`
+# / concrete hosts under it). Any other name inside the base (e.g. `*.<base>`,
+# `evil.<base>`) is structurally unexpected and never anchored -- it alerts.
+sub allocatable {
+    my ($s) = @_;
+    (my $zone = $s) =~ s/^(?:\*|[^.]+)\.//;	# strip leftmost (wildcard) label
+    return 1 if $zone =~ /^snif-[0-9a-z_-]+\.\Q$C{base}\E$/i;
+    return 1 if $s   =~ /^snif-[0-9a-z_-]+\.\Q$C{base}\E$/i;
+    return 0;
+}
+
+# An operator-listed exception (SNIFDOG_NAME_ALLOW): an infrastructure name --
+# the init domain, the relay pool host, the base apex -- that is legitimate but
+# is NOT a per-device `snif-<id>` zone and does not follow the never-re-key rule.
+# snifdog ignores these entirely rather than anchoring them, so a routine key
+# rotation on infra never false-alarms.
+sub name_ignored {
+    my ($s) = @_;
+    return 1 if grep { lc $_ eq lc $s } @{$C{name_allow}};
+    return 0;
+}
+
+sub is_wild   { $_[0] =~ /^\*\./ }
+sub parent_of { (my $p = $_[0]) =~ s/^[^.]+\.//; $p }
+
+# RFC 6125 single-label wildcard match: `*.parent` matches `label.parent`.
+sub wc_match {
+    my ($w, $h) = @_;
+    return 0 unless is_wild($w);
+    return 0 if is_wild($h);
+    my $wp = parent_of($w);
+    return (parent_of($h) eq $wp) && ($h ne $wp);
+}
+
+# Do names $a and $b both cover some concrete host? Used to detect an up-level
+# wildcard (or a concrete host under a pinned wildcard) presenting a foreign key.
+sub overlap {
+    my ($a, $b) = @_;
+    return 1 if $a eq $b;
+    return 1 if is_wild($a) && wc_match($a, $b);
+    return 1 if is_wild($b) && wc_match($b, $a);
+    return 1 if is_wild($a) && is_wild($b) && parent_of($a) eq parent_of($b);
+    return 0;
+}
+
+#___________________________________________________________________ relay CSR
+
+# CA-proxy ground truth (reconcile-adjacent, but strictly name-bound). Only
+# meaningful when snifdog runs co-located with the SNIF CA proxy: the proxy keys
+# one CSR per issued name at $CA_PROXY/csr/<apex>.csr, and because a SNIF device
+# never re-keys, that CSR's SPKI is the single key the name may ever present.
+
+# The base domains this relay is authoritative for. The CA proxy lists them in
+# $CA_PROXY/etc/<init-domain>.domains -- SNIF issues device zones snif-<id>.<base>
+# as subdomains of each. Cached after first read.
+our @RelayBases;
+our $RelayBasesInit = 0;
+sub relay_bases {
+    return @RelayBases if $RelayBasesInit;
+    $RelayBasesInit = 1;
+    my %b;
+    if ($C{ca_proxy} && -d "$C{ca_proxy}/etc") {
+	for my $f (glob "$C{ca_proxy}/etc/*.domains") {
+	    open my $fh, '<', $f or next;
+	    while (my $l = <$fh>) {
+		$l =~ s/#.*//;
+		$l =~ s/^\s+|\s+$//g;
+		$b{lc $l} = 1 if length $l;
+	    }
+	    close $fh;
+	}
+    }
+    @RelayBases = sort keys %b;
+    return @RelayBases;
+}
+
+# The apex (certificate) name for a CT SAN: strip a leading wildcard label, so
+# `*.snif-<id>.<base>` -> `snif-<id>.<base>`, which is how the CA proxy keys its
+# csr/ and crt/ files.
+sub apex_of { (my $a = $_[0]) =~ s/^\*\.//; return $a }
+
+# Is $apex served by this relay (equal to, or a subdomain of, a relay base)?
+sub is_local_relay {
+    my ($apex) = @_;
+    for my $base (relay_bases()) {
+	return 1 if $apex eq $base || $apex =~ /\.\Q$base\E$/i;
+    }
+    return 0;
+}
+
+# Ground-truth SPKI for a name, read from its CA-proxy CSR. Returns:
+#   <hex> -- the one key SNIF holds for this local relay domain
+#   ''    -- a local relay domain with NO CSR file (never provisioned here)
+#   undef -- not a local relay domain, or CSR validation unavailable (off, or the
+#            CSR file is present but unreadable -- an ops fault, not a mis-issuance)
+# The '' / undef split matters: '' is a positive "the proxy never requested this
+# name", which the caller escalates to an alert; a corrupt CSR must NOT masquerade
+# as that, so it returns undef (fall through to first-use) and logs an error.
+our %CsrCache;
+sub relay_csr_spki {
+    my ($name) = @_;
+    return undef unless $C{use_csr};
+    my $apex = apex_of($name);
+    return $CsrCache{$apex} if exists $CsrCache{$apex};
+    my $r;
+    my $csr = "$C{ca_proxy}/csr/$apex.csr";
+    if (!is_local_relay($apex)) {
+	$r = undef;
+    } elsif (! -f $csr) {
+	$r = '';
+    } elsif (defined(my $s = spki_from_csrfile($csr))) {
+	$r = $s;
+    } else {
+	say_log('ERROR', "cannot read SPKI from CSR $csr");
+	$r = undef;
+    }
+    return $CsrCache{$apex} = $r;
+}
+
+#___________________________________________________________________ pin DB
+
+sub pin_file {
+    my ($name) = @_;
+    (my $safe = $name) =~ s/[^A-Za-z0-9._-]/_/g;
+    return "$C{pins_dir}/$safe.pin";
+}
+
+# A pin record: { name => ..., pins => { spki => {source,first,serial,issuer} } }
+sub pin_load {
+    my ($name) = @_;
+    my $f = pin_file($name);
+    return undef unless -e $f;
+    open my $fh, '<', $f or return undef;
+    my %rec = (name => $name, pins => {});
+    while (<$fh>) {
+	chomp;
+	if (/^name\s+(\S+)/) { $rec{name} = $1 }
+	elsif (/^pin\s+([0-9a-f]{64})\s*(.*)$/) {
+	    my ($spki, $rest) = ($1, $2);
+	    my %m;
+	    while ($rest =~ /(\w+)=("(?:[^"]*)"|\S+)/g) {
+		my ($k, $v) = ($1, $2);
+		$v =~ s/^"(.*)"$/$1/;
+		$m{$k} = $v;
+	    }
+	    $rec{pins}{$spki} = \%m;
+	}
+    }
+    close $fh;
+    return \%rec;
+}
+
+sub pin_save {
+    my ($rec) = @_;
+    make_path($C{pins_dir}) unless -d $C{pins_dir};
+    my $f = pin_file($rec->{name});
+    open my $fh, '>', "$f+" or do { say_log('ERROR', "pin write: $f+: $!"); return 0 };
+    print $fh "name $rec->{name}\n";
+    for my $spki (sort keys %{$rec->{pins}}) {
+	my $m = $rec->{pins}{$spki};
+	my $meta = join ' ', map {
+	    my $v = $m->{$_};
+	    $v =~ /\s/ ? qq{$_="$v"} : "$_=$v";
+	} grep { defined $m->{$_} && $m->{$_} ne '' } sort keys %$m;
+	print $fh "pin $spki" . ($meta ? " $meta" : '') . "\n";
+    }
+    close $fh;
+    rename "$f+", $f or do { say_log('ERROR', "pin rename: $f: $!"); return 0 };
+    return 1;
+}
+
+sub pin_all {
+    my @out;
+    opendir my $dh, $C{pins_dir} or return ();
+    for my $e (sort readdir $dh) {
+	next unless $e =~ /\.pin$/;
+	open my $fh, '<', "$C{pins_dir}/$e" or next;
+	my $line = <$fh>;
+	close $fh;
+	next unless $line && $line =~ /^name\s+(\S+)/;
+	my $rec = pin_load($1);
+	push @out, $rec if $rec;
+    }
+    closedir $dh;
+    return @out;
+}
+
+# Add an SPKI to a name's pin set. Returns 'new' (name unseen), 'add' (extra
+# SPKI on a known name -- a conflict the caller decided to learn) or 'known'.
+sub pin_add {
+    my ($name, $spki, %meta) = @_;
+    my $rec = pin_load($name);
+    my $status;
+    if (!$rec) {
+	$rec = { name => $name, pins => {} };
+	$status = 'new';
+    } elsif ($rec->{pins}{$spki}) {
+	return ('known', $rec);
+    } else {
+	$status = 'add';
+    }
+    $meta{first} ||= ts();
+    $rec->{pins}{$spki} = { %meta };
+    pin_save($rec);
+    return ($status, $rec);
+}
+
+#___________________________________________________________________ cursor
+
+sub cursor_file { "$C{var_dir}/$C{source}.cursor" }
+
+sub cursor_load { _cursor_load(cursor_file()) }
+sub cursor_save { _cursor_save(cursor_file(), $_[0]) }
+
+# Read / rename-atomically checkpoint a monotonic cursor at an explicit path, so
+# the same primitive serves both the live source cursor and the backfill cursor.
+sub _cursor_load {
+    my ($f) = @_;
+    return '' unless -e $f;
+    open my $fh, '<', $f or return '';
+    my $c = <$fh>;
+    close $fh;
+    chomp $c if defined $c;
+    return defined $c ? $c : '';
+}
+
+sub _cursor_save {
+    my ($f, $c) = @_;
+    make_path($C{var_dir}) unless -d $C{var_dir};
+    open my $fh, '>', "$f+" or return;
+    print $fh "$c\n";
+    close $fh;
+    rename "$f+", $f;
+}
+
+# Names+SPKIs we have already alerted on, so a bad cert lingering in the log
+# does not re-fire every pass. Keyed "kind\tname\tspki".
+sub alerted_file { "$C{var_dir}/alerted" }
+
+sub alerted_load {
+    my %seen;
+    my $f = alerted_file();
+    return \%seen unless -e $f;
+    open my $fh, '<', $f or return \%seen;
+    while (<$fh>) { chomp; $seen{$_} = 1 if length }
+    close $fh;
+    return \%seen;
+}
+
+sub alerted_add {
+    my ($key) = @_;
+    make_path($C{var_dir}) unless -d $C{var_dir};
+    open my $fh, '>>', alerted_file() or return;
+    print $fh "$key\n";
+    close $fh;
+}
+
+#___________________________________________________________________ ledger
+
+# reconcile mode: build an index of SPKIs the CA proxy legitimately requested,
+# from csr/ under SNIF_CA_PROXY. Every cert the proxy issues is loaded from its
+# csr/<name>.csr (snif-certd), so a CSR's key IS the issued cert's key, and csr/
+# is permanent (snif-arc rotates crt/->arc/, never csr/) -- making csr/ the
+# complete, authoritative key set. Indexing the delivered crt//arc/ certs adds
+# no key csr/ lacks and is strictly worse: it would launder a compromised-proxy
+# cert into "known-good". A key in this index is a real issuance the pin set had
+# not yet learned (auto-learn), not an attack.
+our %Ledger;
+our $LedgerBuilt = 0;
+sub ledger_index {
+    return \%Ledger if $LedgerBuilt;
+    $LedgerBuilt = 1;
+    my $base = $C{ca_proxy};
+    return \%Ledger unless $base && -d $base;
+    for my $f (glob "$base/csr/*.csr") {
+	my $s = spki_from_csrfile($f);
+	$Ledger{$s} = $f if $s;
+    }
+    say_log('INFO', 'reconcile: indexed ' . scalar(keys %Ledger) . " CSR SPKIs from $base");
+    return \%Ledger;
+}
+
+sub ledger_has {
+    my ($spki) = @_;
+    return 0 unless $C{use_ledger};
+    return exists ledger_index()->{$spki} ? 1 : 0;
+}
+
+#___________________________________________________________________ evidence
+
+sub evidence_bundle {
+    my ($f) = @_;		# a finding hashref
+    my $rec = $f->{rec};
+    my $stamp = strftime('%Y%m%dT%H%M%SZ', gmtime);
+    (my $safe = $f->{name}) =~ s/[^A-Za-z0-9._-]/_/g;
+    my $dir = "$C{evidence_dir}/${stamp}_${safe}_" . substr($f->{spki}, 0, 12);
+    make_path($dir);
+    if (defined $rec->{der} && length $rec->{der}) {
+	if (open my $fh, '>', "$dir/cert.der") { binmode $fh; print $fh $rec->{der}; close $fh }
+	system(qq{openssl x509 -inform DER -in "$dir/cert.der" -outform PEM -out "$dir/cert.pem" 2>/dev/null});
+	system(qq{openssl x509 -inform DER -in "$dir/cert.der" -noout -text -out "$dir/cert.txt" 2>/dev/null})
+	    or `openssl x509 -inform DER -in "$dir/cert.der" -noout -text 2>/dev/null > "$dir/cert.txt"`;
+    }
+    my $meta = {
+	detected_at  => ts(),
+	kind         => $f->{kind},
+	reason       => $f->{reason},
+	name         => $f->{name},
+	spki_sha256  => $f->{spki},
+	dns_names    => $rec->{dns_names},
+	issuer       => $rec->{issuer},
+	serial       => $rec->{serial},
+	not_before   => $rec->{not_before},
+	not_after    => $rec->{not_after},
+	source       => $rec->{source},
+	source_id    => $rec->{id},
+	cert_sha256  => $rec->{cert_sha256},
+	ledger_match => ($C{use_ledger} ? ledger_has($f->{spki}) : undef),
+    };
+    if (open my $fh, '>', "$dir/meta.json") {
+	print $fh JSON::PP->new->canonical->pretty->encode($meta);
+	close $fh;
+    }
+    return $dir;
+}
+
+#___________________________________________________________________ alerting
+
+sub webhook_post {
+    my ($f, $bundle) = @_;
+    return unless $C{webhook};
+    require LWP::UserAgent;
+    my $ua = LWP::UserAgent->new(timeout => 30);
+    $ua->agent("snifdog/$VERSION");
+    my $payload = JSON::PP->new->canonical->encode({
+	tool => 'snifdog', kind => $f->{kind}, reason => $f->{reason},
+	name => $f->{name}, spki_sha256 => $f->{spki},
+	dns_names => $f->{rec}{dns_names}, issuer => $f->{rec}{issuer},
+	source => $f->{rec}{source}, source_id => $f->{rec}{id},
+	evidence => $bundle, detected_at => ts(),
+    });
+    my $r = $ua->post($C{webhook}, 'Content-Type' => 'application/json', Content => $payload);
+    say_log('ERROR', 'webhook: ' . $r->status_line) unless $r->is_success;
+}
+
+sub email_send {
+    my ($f, $bundle) = @_;
+    return unless $C{email};
+    my $to = $C{email};
+    if (open my $mh, '|-', "/usr/sbin/sendmail -t") {
+	print $mh "To: $to\n";
+	print $mh "Subject: [snifdog] $f->{kind}: $f->{name}\n";
+	print $mh "Content-Type: text/plain\n\n";
+	print $mh "SNIF CT watchdog alert\n\n";
+	print $mh "  kind    : $f->{kind}\n";
+	print $mh "  reason  : $f->{reason}\n";
+	print $mh "  name    : $f->{name}\n";
+	print $mh "  spki    : $f->{spki}\n";
+	print $mh "  issuer  : " . ($f->{rec}{issuer} // '') . "\n";
+	print $mh "  source  : $f->{rec}{source} #$f->{rec}{id}\n";
+	print $mh "  evidence: $bundle\n";
+	close $mh;
+    } else {
+	say_log('ERROR', "email: cannot run sendmail: $!");
+    }
+}
+
+# A finding is { kind => alert|notice, reason, name, spki, rec }. Notices are
+# low-severity (first-seen anchors, reconcile auto-learns); alerts are the real
+# signal and are deduped, evidence-bundled, and fanned out to the sinks.
+sub handle_finding {
+    my ($f, $alerted) = @_;
+    if ($f->{kind} eq 'notice') {
+	say_log('NOTICE', "$f->{reason}: $f->{name} spki=" . substr($f->{spki}, 0, 16) . '...');
+	return;
+    }
+    my $key = "$f->{kind}\t$f->{name}\t$f->{spki}";
+    if ($alerted->{$key}) {
+	say_log('INFO', "alert already recorded for $f->{name} (spki=" . substr($f->{spki}, 0, 16) . '...)');
+	return;
+    }
+    my $bundle = evidence_bundle($f);
+    say_log('ALERT', "$f->{reason}: name=$f->{name} spki=$f->{spki} issuer=" .
+	($f->{rec}{issuer} // '?') . " source=$f->{rec}{source}#$f->{rec}{id} evidence=$bundle");
+    webhook_post($f, $bundle);
+    email_send($f, $bundle);
+    alerted_add($key);
+    $alerted->{$key} = 1;
+    $NewAlerts++;
+}
+
+#___________________________________________________________________ core
+
+# Classify one observed cert. Performs anchoring side effects (writes pins) and
+# returns a list of findings (alerts + notices) for the caller to dispatch.
+sub process_cert {
+    my ($rec) = @_;
+    my $spki = $rec->{spki};
+    $spki ||= spki_from_der($rec->{der});
+    unless ($spki) {
+	say_log('ERROR', "cannot derive SPKI for $rec->{source}#$rec->{id}");
+	return ();
+    }
+    $rec->{spki} = $spki;
+    my @relevant = grep { in_base($_) } @{$rec->{dns_names}};
+    return () unless @relevant;
+
+    my @findings;
+
+    for my $s (@relevant) {
+	if (name_ignored($s)) {
+	    # An operator-listed infra exception (init domain, pool host, apex):
+	    # not a per-device zone, managed outside the SNIF model -- ignore it
+	    # entirely (no anchor, no CSR check, no alert).
+	    next;
+	}
+	if (!allocatable($s)) {
+	    # A SNIF-namespace name that is neither a device allocation nor a
+	    # listed exception: a broad `*.<base>`, the base itself, or an
+	    # unexpected label.
+	    push @findings, {
+		kind => 'alert', reason => 'unexpected name in SNIF namespace',
+		name => $s, spki => $spki, rec => $rec,
+	    };
+	    next;
+	}
+	my $rec_pin = pin_load($s);
+	my $csr = relay_csr_spki($s);	# <hex> / '' (local, no CSR) / undef (not local)
+	if (defined $csr && $csr ne '' && $csr ne $spki) {
+	    # Ground truth: the CA proxy holds a *different* key for this local
+	    # relay domain, and SNIF never re-keys a name -- so this cert's key
+	    # was never requested through the proxy. That is a mis-issuance, not a
+	    # first-use ambiguity: alert immediately, and do NOT anchor the foreign
+	    # key, whether or not we had seen this name before.
+	    push @findings, {
+		kind => 'alert',
+		reason => 'cert key does not match CA-proxy CSR for local relay domain',
+		name => $s, spki => $spki, rec => $rec,
+	    };
+	    next;
+	}
+	if (defined $csr && $csr eq '') {
+	    # $s is a device zone here -- infra exceptions and non-allocatable
+	    # names were already handled at the top of the loop. A publicly-trusted
+	    # cert exists for a zone this relay is authoritative for, yet the CA
+	    # proxy holds NO CSR for it -- and the proxy never issues without first
+	    # loading csr/<zone>.csr. So this cert was never requested through us at
+	    # all: a mis-issuance for an unprovisioned name, as provable as a key
+	    # mismatch. Alert immediately; do NOT anchor the key.
+	    push @findings, {
+		kind => 'alert',
+		reason => 'cert for a relay-local zone with no CA-proxy CSR (never provisioned)',
+		name => $s, spki => $spki, rec => $rec,
+	    };
+	    next;
+	}
+	if (!$rec_pin) {
+	    # First-seen anchor. Prefer CSR ground truth (a proven-legit key),
+	    # then the reconcile ledger, then trust-on-first-use.
+	    my $src = (defined $csr && $csr eq $spki) ? 'csr-verified'
+		    : ledger_has($spki)              ? 'reconcile'
+		    :                                  'anchor';
+	    pin_add($s, $spki, source => $src, issuer => ($rec->{issuer} // ''),
+		serial => ($rec->{serial} // ''));
+	    push @findings, {
+		kind => 'notice',
+		reason => $src eq 'csr-verified' ? 'anchored (matches CA-proxy CSR)'
+			: $src eq 'reconcile'    ? 'anchored (matches CA-proxy ledger)'
+			:                          'first-seen anchor',
+		name => $s, spki => $spki, rec => $rec,
+	    };
+	} elsif ($rec_pin->{pins}{$spki}) {
+	    # Known-good renewal (same key, new serial): silent.
+	} elsif ((defined $csr && $csr eq $spki) || ledger_has($spki)) {
+	    # A legit issuance the pin set had not learned: auto-learn, low sev.
+	    my $src = (defined $csr && $csr eq $spki) ? 'csr-verified' : 'reconcile';
+	    pin_add($s, $spki, source => $src, issuer => ($rec->{issuer} // ''),
+		serial => ($rec->{serial} // ''));
+	    push @findings, {
+		kind => 'notice',
+		reason => $src eq 'csr-verified'
+			? 'auto-learned from CA-proxy CSR' : 'auto-learned from CA-proxy ledger',
+		name => $s, spki => $spki, rec => $rec,
+	    };
+	} else {
+	    # A cert for a pinned SNIF name with an unrecognized key.
+	    push @findings, {
+		kind => 'alert', reason => 'SPKI conflict on pinned name',
+		name => $s, spki => $spki, rec => $rec,
+	    };
+	}
+    }
+
+    # Overlap cross-check: a cert whose SANs cover some *other* pinned name with
+    # a key that is not in that name's pin set. Catches an up-level wildcard
+    # (`*.<base>`) or a concrete host under a pinned device wildcard. Only the
+    # *watched* SANs count -- an operator-listed infra name is ignored entirely,
+    # so it must not raise an overlap alert even if it is itself a wide wildcard.
+    my @watched = grep { !name_ignored($_) } @relevant;
+    for my $p (pin_all()) {
+	my $pn = $p->{name};
+	next if grep { $_ eq $pn } @watched;		# exact case handled above
+	next unless grep { overlap($_, $pn) } @watched;
+	next if $p->{pins}{$spki};			# key already trusted for it
+	next if ledger_has($spki);
+	my $pcsr = relay_csr_spki($pn);			# CSR ground truth for pn
+	next if defined $pcsr && $pcsr eq $spki;	# proven-legit key for pn
+	push @findings, {
+	    kind => 'alert', reason => 'overlapping cert with foreign key covers pinned name',
+	    name => $pn, spki => $spki, rec => $rec,
+	};
+    }
+
+    return @findings;
+}
+
+# One-shot full-history seed. The default certspotter source is ideal for steady
+# state but its free plan returns only currently-valid certs (expired issuances
+# are silently omitted, and `expired=true` is not_allowed_by_plan), so it can
+# never reach history. On first run we seed the pin DB from crt.sh, which serves
+# the full history including expired certs. Gated on a dedicated `backfill.done`
+# marker -- NOT the certspotter cursor -- so that a crt.sh outage on first run
+# (crt.sh 5xx's often) does not permanently skip the backfill: the certspotter
+# pass still saves its cursor and covers live certs, while the marker stays
+# absent and the backfill retries each pass until it completes once.
+sub backfill_marker { "$C{var_dir}/backfill.done" }
+
+sub backfill_due {
+    return 0 unless $C{backfill} && $C{backfill} ne '0' && lc $C{backfill} ne 'no';
+    return 0 unless $C{source} eq 'certspotter';	# crtsh already reads full history
+    return 0 if -e backfill_marker();			# already seeded once
+    return 1;
+}
+
+sub backfill_cursor_file { "$C{var_dir}/backfill.cursor" }
+
+sub run_backfill {
+    my ($alerted) = @_;
+    require Snif::CT::CrtSh;
+    my $src = Snif::CT::CrtSh->new(base => $C{base});
+    my $cursor = _cursor_load(backfill_cursor_file());
+    say_log('NOTICE', "first run: full-history backfill via crt.sh (base=$C{base}" .
+	($cursor ne '' ? ", resuming at id>$cursor" : '') . ')');
+    # Page through crt.sh, checkpointing the max-seen id after each page. A full
+    # seed is hundreds of slow, serial ?d= fetches; without a checkpoint an
+    # interruption (or a crt.sh 5xx mid-sweep) discards all progress and re-sweeps
+    # next pass. Pins land per cert (process_cert) and the cursor advances per
+    # page, so a killed run resumes where it left off instead of restarting.
+    my $seen = 0;
+    while (1) {
+	my ($recs, $next, $more);
+	my $ok = eval { ($recs, $next, $more) = $src->fetch($cursor); 1 };
+	unless ($ok) {
+	    my $err = $@ || 'crt.sh fetch failed';
+	    chomp $err;
+	    # Non-fatal and NOT marked done: pages seen so far are pinned and the
+	    # cursor is saved, so the next pass resumes here. The live certspotter
+	    # source still runs after this and covers current certs.
+	    say_log('ERROR', "backfill: $err (checkpoint id=$cursor; will resume next pass)");
+	    return;
+	}
+	for my $rec (@$recs) {
+	    $seen++;
+	    for my $f (process_cert($rec)) { handle_finding($f, $alerted) }
+	}
+	$cursor = $next;
+	_cursor_save(backfill_cursor_file(), $cursor);
+	last unless $more;
+    }
+    # Seed complete: mark done so subsequent passes skip the crt.sh sweep entirely.
+    make_path($C{var_dir}) unless -d $C{var_dir};
+    if (open my $m, '>', backfill_marker()) { print $m ts() . " last_id=$cursor\n"; close $m }
+    say_log('NOTICE', "backfill complete: $seen cert(s) examined this pass via crt.sh");
+}
+
+sub run_pass {
+    my $alerted = alerted_load();
+    run_backfill($alerted) if backfill_due();
+    my $src = load_source();
+    my $cursor = cursor_load();
+    say_log('INFO', "pass start: source=$C{source} base=$C{base} mode=$C{mode} cursor=" . ($cursor eq '' ? '(begin)' : $cursor));
+    my ($seen, $reset) = (0, 0);
+    while (1) {
+	my ($recs, $next, $more);
+	my $ok = eval { ($recs, $next, $more) = $src->fetch($cursor); 1 };
+	if (!$ok) {
+	    my $err = $@ || 'fetch failed';
+	    # A rejected/pruned cursor is not a correctness problem: restart from
+	    # the beginning and reconverge (the pin DB is a function of history).
+	    if (!$reset && $cursor ne '') {
+		say_log('NOTICE', "cursor rejected ($err); restarting from the beginning");
+		$cursor = '';
+		$reset = 1;
+		next;
+	    }
+	    chomp $err;
+	    say_log('ERROR', "fetch: $err");
+	    return 1;
+	}
+	for my $rec (@$recs) {
+	    $seen++;
+	    for my $f (process_cert($rec)) { handle_finding($f, $alerted) }
+	}
+	$cursor = $next;
+	cursor_save($cursor);
+	last unless $more;
+    }
+    say_log('INFO', "pass done: $seen cert(s) examined, $NewAlerts new alert(s)");
+    return $NewAlerts ? 2 : 0;
+}
+
+sub load_source {
+    my %opt = (base => $C{base}, token => $C{cs_token});
+    my $cls = $C{source} eq 'crtsh' ? 'Snif::CT::CrtSh' : 'Snif::CT::CertSpotter';
+    eval "require $cls; 1" or die "snifdog: cannot load source $cls: $@\n";
+    return $cls->new(%opt);
+}
+
+#___________________________________________________________________ commands
+
+sub cmd_pin {
+    my (@args) = @_;
+    my ($name, $from, $spki, $issuer);
+    while (@args) {
+	my $a = shift @args;
+	if    ($a eq '--from')   { $from = shift @args }
+	elsif ($a eq '--spki')   { $spki = shift @args }
+	elsif ($a eq '--issuer') { $issuer = shift @args }
+	elsif ($a =~ /^-/)       { die "snifdog pin: unknown option $a\n" }
+	else                     { $name = $a }
+    }
+    $from ||= $C{conn_crt} if !$spki && !$from && -e ($C{conn_crt} || '');
+    if ($from) {
+	$spki ||= spki_from_certfile($from) or die "snifdog pin: cannot read SPKI from $from\n";
+	if (!$name) {
+	    my @sans = sans_from_certfile($from);
+	    ($name) = grep { is_wild($_) } @sans;
+	    $name ||= $sans[0];
+	}
+    }
+    die "snifdog pin: name required (or --from a cert with SANs)\n" unless $name;
+    die "snifdog pin: --spki or --from required\n" unless $spki;
+    $spki = lc $spki;
+    die "snifdog pin: SPKI must be a sha256 hex string\n" unless $spki =~ /^[0-9a-f]{64}$/;
+    my ($status) = pin_add($name, $spki, source => 'explicit',
+	($issuer ? (issuer => $issuer) : ()));
+    print "pinned $name\n  spki $spki\n  ($status)\n";
+    return 0;
+}
+
+sub cmd_list {
+    my @all = pin_all();
+    unless (@all) { print "no pins under $C{pins_dir}\n"; return 0 }
+    for my $rec (sort { $a->{name} cmp $b->{name} } @all) {
+	print "$rec->{name}\n";
+	for my $spki (sort keys %{$rec->{pins}}) {
+	    my $m = $rec->{pins}{$spki};
+	    print "  $spki  source=" . ($m->{source} // '?') .
+		($m->{first} ? " first=$m->{first}" : '') . "\n";
+	}
+    }
+    return 0;
+}
+
+#___________________________________________________________________ banner
+
+# The SNIF logo, ANSI-colored, shown above the usage text (on `help` and on an
+# unknown command) the way snifd prints its startup banner.
+my $BANNER = <<"BANNER";
+    \e[1m_________\e[0m
+   \e[1m/\e[0m\e[1;30m````````\e[0m\e[1m_\\\e[0m                   \e[1;36mS N I F\e[0m \e[1;31m~\e[0m e2e TLS trust for IoT
+  \e[1m/\e[0m\e[2;33m\\     ,\e[0m \e[1m/\e[0m \e[1;34mO\e[0m\e[1;30m\\\e[0m      \e[1;30m___\e[0m         e2e TLS SNI Forwarder
+ \e[1m|\e[0m \e[2;33m|     |\e[0m \e[1m\\__\e[0m\e[1;30m|\e[0m\e[1m_____\e[0m\e[1;30m/  o\\\e[0m        e2e TLS CA Proxy
+ \e[1m|\e[0m \e[2;33m|     |\e[0m  \e[1;30m``/`````\\___/\e[0m
+ \e[1m|\e[0m \e[2;33m|     |\e[0m \e[1;30m. |\e[0m <\e[1m"""""""\e[0m\e[1;31m~~\e[0m        https://snif.host
+ \e[1m|\e[0m  \e[2;33m\\___/\e[0m \e[1;30m``  \\\e[0m\e[1m________/\e[0m         (C) 2021-2026 VESvault Corp
+  \e[1m\\\e[0m  \e[2;33m'''\e[0m  \e[1;30m```\e[0m \e[1m/\e[0m\e[1;30m````````\e[0m          \e[1msnifdog\e[0m v.$VERSION
+   \e[1m\\_________/\e[0m
+
+BANNER
+
+# Write $str to $fh, stripping the ANSI SGR escapes when $fh is not a terminal
+# (piped, redirected, captured to a log) -- the Perl analogue of snifd's
+# snif_out_ansi: colored on a tty, clean plain text everywhere else.
+sub out_ansi {
+    my ($fh, $str) = @_;
+    $str =~ s/\e\[[0-9;]*m//g unless -t $fh;
+    print {$fh} $str;
+}
+
+#___________________________________________________________________ commands (usage)
+
+sub usage {
+    my $fh = shift || \*STDOUT;
+    out_ansi($fh, $BANNER);
+    print {$fh} <<"EOF";
+snifdog $VERSION -- the SNIF CA Transparency watchdog
+
+usage:
+  snifdog pin <name> [--from <cert>] [--spki <hex>] [--issuer <s>]
+                          anchor a name's SPKI (explicit pin, strongest anchor)
+  snifdog poll            one incremental CT pass (cron */15); exit 2 on alert
+  snifdog watch           long-running loop (poll every SNIFDOG_POLL_INTERVAL s)
+  snifdog list            show the pin database
+  snifdog help            this text
+
+config: $DEFAULT_CONF   (override with \$SNIFDOG_CONF)
+EOF
+    return 0;
+}
+
+#___________________________________________________________________ main
+
+sub main {
+    my $cmd = shift @ARGV // 'help';
+    load_conf($DEFAULT_CONF);
+    openlog('snifdog', 'pid', LOG_DAEMON) if use_syslog();
+
+    my $rc = 0;
+    if    ($cmd eq 'pin')  { $rc = cmd_pin(@ARGV) }
+    elsif ($cmd eq 'poll') { $rc = run_pass() }
+    elsif ($cmd eq 'list') { $rc = cmd_list() }
+    elsif ($cmd eq 'watch') {
+	say_log('INFO', "snifdog watch: interval=$C{interval}s");
+	while (1) {
+	    $NewAlerts = 0;
+	    eval { run_pass(); 1 } or say_log('ERROR', "pass: $@");
+	    sleep $C{interval};
+	}
+    }
+    elsif ($cmd eq 'help' || $cmd eq '-h' || $cmd eq '--help') { $rc = usage() }
+    else { print STDERR "snifdog: unknown command '$cmd'\n\n"; usage(\*STDERR); $rc = 64 }
+
+    closelog() if use_syslog();
+    return $rc;
+}
+
+# Run as a program; stay quietly require-able (modulino) for tests, which pull in
+# these subs and drive process_cert() directly without a live CT fetch.
+exit main() unless caller;
+1;

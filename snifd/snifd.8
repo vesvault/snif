@@ -1,0 +1,176 @@
+.\" Man page for snifd, the SNIF relay / connector daemon.
+.\" Keep in sync with the snif_help string in snifd/help.c and the option
+.\" parser in snifd/snifd.c.  Version: SNIF_VERSION_STR.
+.TH SNIFD 8 "2026-07-05" "snif 1.03" "SNIF Manual"
+.SH NAME
+snifd \- SNIF relay and connector daemon (end\-to\-end TLS SNI forwarding)
+.SH SYNOPSIS
+.B snifd
+.RB [ \-l
+.RI [ bind :] snif_port ]
+.RB [ \-s
+.RI [ bind :] relay_port ]
+.RB [ \-p
+.IR push_fifo ]
+.RB [ \-i
+.IR in_fifo ]
+.RB [ \-t
+.IR abuse_sense ]
+.RI [ bind :] fwd_port
+.RI [[ bind :] fwd_port " ...]"
+.br
+.B snifd \-c
+.I cert_file
+.B \-k
+.I pkey_file
+.B \-a
+.I init_url
+.RB [ \-K
+.IR key_algo ]
+.br
+.B snifd
+.RB [ \-d ]
+.B \-c
+.I cert_file
+.B \-k
+.I pkey_file
+.RB [ \-r
+.IR snif_host [: relay_port ]]
+.RI [ fwd_port :[ dst_host :]] dst_tls_port
+.RI "| [" fwd_port :[ dst_host :]]^ dst_plain_port " ..."
+.SH DESCRIPTION
+.B snifd
+is the core SNIF daemon. SNIF gives a device behind NAT a publicly trusted
+HTTPS hostname without exposing its private key: TLS terminates on the device,
+and a public relay forwards the still\-encrypted stream by its TLS SNI record.
+.B snifd
+runs in one of two roles.
+.TP
+.B Relay
+Accepts connections from SNIF connectors on the SNIF port
+.RB ( \-l ),
+accepts incoming TLS clients on the relay port
+.RB ( \-s ),
+and forwards each still\-encrypted stream to the connector that registered the
+matching SNI name. The relay never holds a key and never terminates TLS, so it
+cannot read or alter forwarded traffic.
+.TP
+.B Connector
+Runs on the device. It first initializes a certificate \(em allocating a
+permanent SNIF hostname \(em against a CA proxy
+.RB ( \-a ),
+then connects outbound to a relay
+.RB ( \-r )
+and forwards accepted streams to local or backend services. A device never
+re\-keys: a new key gets a new hostname.
+.PP
+Invoked with invalid arguments,
+.B snifd
+prints a usage summary. The
+.BR snif\-conn (1)
+wrapper drives the connector role from
+.IR /etc/snif/snif.conf .
+.SH OPTIONS
+.SS Relay options
+.TP
+.BI \-l " [bind:]snif_port"
+Listen for SNIF connectors on
+.IR snif_port .
+.TP
+.BI \-s " [bind:]relay_port"
+Listen for incoming relayed TLS clients on
+.IR relay_port .
+.TP
+.BI \-t " abuse_sense"
+Abuse\-detection sensitivity threshold.
+.SS Connector options
+.TP
+.BI \-c " cert_file"
+Certificate file (PEM). Required for the connector role.
+.TP
+.BI \-k " pkey_file"
+Private key file for the certificate.
+.TP
+.BI \-a " init_url"
+CA\-proxy initialization URL; allocates or renews the certificate and its SNIF
+hostname (for example
+.IR https://snif.snif.xyz:4443/ ).
+.TP
+.BI \-u " api_url"
+Certificate API URL. Defaults to
+.IR http://{base_hostname}/snif\-cert/ .
+.TP
+.BI \-K " key_algo"
+Key algorithm for a newly generated key:
+.IR RSA [: bits ],
+.IR EC [: curve ],
+.IR ED25519 ", " ED448 .
+Defaults to RSA, or as steered by the CA proxy
+.RI ( X\-SNIF\-KeyAlgo ).
+.TP
+.BI \-r " snif_host[:relay_port]"
+Relay host to connect to;
+.I relay_port
+defaults to the SNIF default port.
+.TP
+.B \-d
+Daemon mode: keep running and forwarding. May be combined with certificate
+initialization.
+.TP
+.B \-P
+Generate a portable pseudo\-random hostname (recommended for new instances).
+Without it, a legacy platform\-dependent generator is used.
+.SS Common options
+.TP
+.BI \-p " push_fifo"
+Path to a FIFO for push notifications.
+.TP
+.BI \-i " in_fifo"
+Path to a control/input FIFO.
+.SH PORT MAPPING
+Positional arguments describe how traffic is forwarded. In relay mode they are
+the ports the relay listens on for incoming TLS clients:
+.IR [bind:]fwd_port " ..."
+.PP
+In connector mode each entry maps a relay\-side port to a local or backend
+service (mirroring
+.I SNIF_CONN_PORTS
+in
+.IR snif.conf ):
+.TP
+.I fwd_port:dst_tls_port
+Forward to a TLS backend on localhost (the backend terminates TLS with the SNIF
+certificate).
+.TP
+.I fwd_port:dst_host:dst_tls_port
+Forward to a TLS backend on
+.IR dst_host .
+.TP
+.I fwd_port:^dst_plain_port
+The connector terminates TLS and forwards plaintext to a local port.
+.TP
+.I fwd_port:dst_host:^dst_plain_port
+Terminate TLS and forward plaintext to
+.IR dst_host .
+.TP
+.I fwd_test_port:^
+Serve the built\-in HTTPS test responder.
+.SH FILES
+.TP
+.I /etc/snif/snif.conf
+Connector and relay configuration (read by
+.BR snif\-conn (1)).
+.TP
+.I /etc/snif/snif.crt\fR, \fI/etc/snif/snif.key
+Default connector certificate and private key.
+.SH SEE ALSO
+.BR snif\-conn (1),
+.BR snifdog (8)
+.PP
+SNIF home page and live demo:
+.IR https://snif.host
+.SH AUTHOR
+Jim Zubov <jz@vesvault.com>, VESvault Corp.
+.SH COPYRIGHT
+Copyright \(co 2021\-2026 VESvault Corp. Licensed under the Apache License,
+Version 2.0.

@@ -1,0 +1,104 @@
+.\" Man page for snif-conn, the SNIF connector wrapper.
+.\" Keep in sync with the bin/snif-conn script and the connector variables in
+.\" etc/snif.conf.
+.TH SNIF\-CONN 1 "2026-07-05" "snif 1.03" "SNIF Manual"
+.SH NAME
+snif\-conn \- run the SNIF connector from /etc/snif/snif.conf
+.SH SYNOPSIS
+.B snif\-conn
+.br
+.B snif\-conn \-d
+.br
+.B snif\-conn \-q
+.SH DESCRIPTION
+.B snif\-conn
+is a small wrapper that runs
+.BR snifd (8)
+in its connector role using the configuration in
+.IR /etc/snif/snif.conf .
+It gives a device a publicly trusted HTTPS hostname without exposing its private
+key: on first run it allocates a permanent SNIF hostname and obtains a
+certificate; thereafter it renews that certificate and, in daemon mode, forwards
+the configured ports through a SNIF relay.
+.PP
+Run without arguments,
+.B snif\-conn
+initializes the connector and prints the allocated hostname. If the certificate
+directory is owned by another user, it re\-executes itself via
+.B sudo
+as
+.I SNIF_USER
+so the certificate can be written.
+.SH OPTIONS
+.TP
+.B \-d
+Run the SNIF connector daemon, forwarding the port map in
+.IR SNIF_CONN_PORTS .
+.TP
+.B \-q
+Quiet: suppress informational notices and the warning printed when the
+certificate file is not writable.
+.PP
+With no option,
+.B snif\-conn
+performs a one\-shot initialization and prints the hostname.
+.SH ENVIRONMENT
+The following variables are read from
+.IR /etc/snif/snif.conf .
+.TP
+.I SNIF_CONN_CRT\fR, \fISNIF_CONN_KEY
+Certificate and private key paths
+.RB ( snifd
+.BR \-c / \-k ).
+.TP
+.I SNIF_CONN_INITURL
+CA\-proxy initialization URL
+.RB ( snifd
+.BR \-a ).
+.TP
+.I SNIF_CONN_KEYALGO
+Optional key algorithm
+.RB ( snifd
+.BR \-K ).
+.TP
+.I SNIF_CONN_HOSTNAME
+Optional fixed hostname
+.RB ( snifd
+.BR \-r );
+must match the wildcard certificate.
+.TP
+.I SNIF_CONN_HOSTNAME_PORTABLE
+When set (and no fixed hostname), request a portable pseudo\-random hostname
+.RB ( snifd
+.BR \-P ).
+.TP
+.I SNIF_CONN_PORTS
+Space\-separated forward map used in daemon mode; see
+.BR snifd (8)
+"PORT MAPPING".
+.TP
+.I SNIF_CONN_DIR\fR, \fISNIF_USER
+Base directory for the certificate and the user to
+.B sudo
+to when creating it.
+.SH FILES
+.TP
+.I /etc/snif/snif.conf
+Connector configuration.
+.SH EXIT STATUS
+Returns
+.B 1
+if the SNIF directory is missing or a privileged re\-exec fails; otherwise the
+exit status of
+.BR snifd (8).
+.SH SEE ALSO
+.BR snifd (8),
+.BR snifdog (8)
+.PP
+SNIF home page and live demo:
+.IR https://snif.host
+.SH AUTHOR
+Jim Zubov <jz@vesvault.com>, VESvault Corp.
+.SH COPYRIGHT
+Copyright \(co 2021\-2026 VESvault Corp. Licensed under the Apache License,
+Version 2.0.
