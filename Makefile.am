@@ -34,12 +34,15 @@ snifd/jTree.h \
 snifd/help.h
 
 bin_PROGRAMS = snifd/snifd
-bin_SCRIPTS = bin/snif-conn
+dist_bin_SCRIPTS = bin/snif-conn
 snifd_snifd_LDADD = lib/libsnif.la -lssl -lcrypto
 
 snifd_snifd_SOURCES = $(SNIFD_CFILES) $(SNIFD_HFILES)
 
 dist_man_MANS = snifd/snifd.8 bin/snif-conn.1
+
+# Files consumed by install-data-hook must ship in the dist tarball.
+EXTRA_DIST = etc/snif.conf etc/systemd/snif-conn.service
 
 snifd_etcdir = /etc/snif
 

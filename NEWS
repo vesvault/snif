@@ -1,5 +1,15 @@
 snif NEWS -- history of user-visible changes
 
+Version 1.04
+------------
+
+* build: fix `make dist` so the release tarball is complete. bin/snif-conn
+  (declared bin_SCRIPTS, which automake treats as generated) and the
+  etc/snif.conf + etc/systemd/snif-conn.service files consumed by
+  install-data-hook were missing from the distribution, breaking a build
+  from the tarball (they were present in a git checkout). No functional
+  change to the connector or relay.
+
 Version 1.03
 ------------
 
