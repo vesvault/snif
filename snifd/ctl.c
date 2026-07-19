@@ -201,9 +201,7 @@ void snif_ctl_pollfn(snif_sock *sock, struct pollfd *pollfd) {
 		const char *cn = snif_cert_getcn(crt, &cl);
 		int hl = strlen(host);
 		const char *p = strchr(host, '.');
-		if ((hl == cl - 2 && cn[1] == '.')
-		    || (hl >= cl && !strncmp(cn + 1, p, cl - 1) && host[0] != '*')
-		) {
+		if (p > host && host + hl - p == cl - 1 && cn[0] == '*' && !memcmp(cn + 1, p, cl - 1) && host[0] != '*') {
 		    snif_ctl_sethost(sock, host, hl);
 		    snif_sock_tmout(sock, sock->listen->tmout.idle);
 		}

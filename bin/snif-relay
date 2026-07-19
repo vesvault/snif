@@ -36,6 +36,11 @@ SNIF_ARGS=""
 
 [ x${SNIF_RELAY_ABUSE} != "x" ] && SNIF_ARGS="${SNIF_ARGS} -t ${SNIF_RELAY_ABUSE}"
 
+for m in ${SNIF_RELAY_MAP}
+do
+    SNIF_ARGS="${SNIF_ARGS} -m ${m}"
+done
+
 for f in ${SNIF_CA_PROXY}/var/snifd-out*.ctl
 do
     [ -e $f ] && SNIF_ARGS="${SNIF_ARGS} -p $f"

@@ -110,9 +110,9 @@ am__installdirs = "$(DESTDIR)$(bindir)" "$(DESTDIR)$(bindir)" \
 PROGRAMS = $(bin_PROGRAMS)
 am__dirstamp = $(am__leading_dot)dirstamp
 am__objects_1 = snifd/listen.$(OBJEXT) snifd/sock.$(OBJEXT) \
-	snifd/port.$(OBJEXT) snifd/host.$(OBJEXT) snifd/buf.$(OBJEXT) \
-	snifd/ctl.$(OBJEXT) snifd/cln.$(OBJEXT) snifd/srv.$(OBJEXT) \
-	snifd/fifo.$(OBJEXT) snifd/abuse.$(OBJEXT) \
+	snifd/port.$(OBJEXT) snifd/host.$(OBJEXT) snifd/map.$(OBJEXT) \
+	snifd/buf.$(OBJEXT) snifd/ctl.$(OBJEXT) snifd/cln.$(OBJEXT) \
+	snifd/srv.$(OBJEXT) snifd/fifo.$(OBJEXT) snifd/abuse.$(OBJEXT) \
 	snifd/watch.$(OBJEXT) snifd/fwd.$(OBJEXT) snifd/util.$(OBJEXT) \
 	snifd/jTree.$(OBJEXT) snifd/help.$(OBJEXT) \
 	snifd/snifd.$(OBJEXT)
@@ -171,9 +171,10 @@ am__depfiles_remade = snifd/$(DEPDIR)/abuse.Po snifd/$(DEPDIR)/buf.Po \
 	snifd/$(DEPDIR)/fifo.Po snifd/$(DEPDIR)/fwd.Po \
 	snifd/$(DEPDIR)/help.Po snifd/$(DEPDIR)/host.Po \
 	snifd/$(DEPDIR)/jTree.Po snifd/$(DEPDIR)/listen.Po \
-	snifd/$(DEPDIR)/port.Po snifd/$(DEPDIR)/snifd.Po \
-	snifd/$(DEPDIR)/sock.Po snifd/$(DEPDIR)/srv.Po \
-	snifd/$(DEPDIR)/util.Po snifd/$(DEPDIR)/watch.Po
+	snifd/$(DEPDIR)/map.Po snifd/$(DEPDIR)/port.Po \
+	snifd/$(DEPDIR)/snifd.Po snifd/$(DEPDIR)/sock.Po \
+	snifd/$(DEPDIR)/srv.Po snifd/$(DEPDIR)/util.Po \
+	snifd/$(DEPDIR)/watch.Po
 am__mv = mv -f
 COMPILE = $(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) \
 	$(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS)
@@ -423,6 +424,7 @@ SNIFD_CFILES = snifd/listen.c \
 snifd/sock.c \
 snifd/port.c \
 snifd/host.c \
+snifd/map.c \
 snifd/buf.c \
 snifd/ctl.c \
 snifd/cln.c \
@@ -440,6 +442,7 @@ SNIFD_HFILES = snifd/listen.h \
 snifd/sock.h \
 snifd/port.h \
 snifd/host.h \
+snifd/map.h \
 snifd/buf.h \
 snifd/ctl.h \
 snifd/cln.h \
@@ -452,7 +455,7 @@ snifd/util.h \
 snifd/jTree.h \
 snifd/help.h
 
-dist_bin_SCRIPTS = bin/snif-conn
+dist_bin_SCRIPTS = bin/snif-conn bin/snif-relay
 snifd_snifd_LDADD = lib/libsnif.la -lssl -lcrypto
 snifd_snifd_SOURCES = $(SNIFD_CFILES) $(SNIFD_HFILES)
 dist_man_MANS = snifd/snifd.8 bin/snif-conn.1
@@ -571,6 +574,8 @@ snifd/port.$(OBJEXT): snifd/$(am__dirstamp) \
 	snifd/$(DEPDIR)/$(am__dirstamp)
 snifd/host.$(OBJEXT): snifd/$(am__dirstamp) \
 	snifd/$(DEPDIR)/$(am__dirstamp)
+snifd/map.$(OBJEXT): snifd/$(am__dirstamp) \
+	snifd/$(DEPDIR)/$(am__dirstamp)
 snifd/buf.$(OBJEXT): snifd/$(am__dirstamp) \
 	snifd/$(DEPDIR)/$(am__dirstamp)
 snifd/ctl.$(OBJEXT): snifd/$(am__dirstamp) \
@@ -652,6 +657,7 @@ distclean-compile:
 @AMDEP_TRUE@@am__include@ @am__quote@snifd/$(DEPDIR)/host.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@snifd/$(DEPDIR)/jTree.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@snifd/$(DEPDIR)/listen.Po@am__quote@ # am--include-marker
+@AMDEP_TRUE@@am__include@ @am__quote@snifd/$(DEPDIR)/map.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@snifd/$(DEPDIR)/port.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@snifd/$(DEPDIR)/snifd.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@snifd/$(DEPDIR)/sock.Po@am__quote@ # am--include-marker
@@ -1143,6 +1149,7 @@ distclean: distclean-recursive
 	-rm -f snifd/$(DEPDIR)/host.Po
 	-rm -f snifd/$(DEPDIR)/jTree.Po
 	-rm -f snifd/$(DEPDIR)/listen.Po
+	-rm -f snifd/$(DEPDIR)/map.Po
 	-rm -f snifd/$(DEPDIR)/port.Po
 	-rm -f snifd/$(DEPDIR)/snifd.Po
 	-rm -f snifd/$(DEPDIR)/sock.Po
@@ -1207,6 +1214,7 @@ maintainer-clean: maintainer-clean-recursive
 	-rm -f snifd/$(DEPDIR)/host.Po
 	-rm -f snifd/$(DEPDIR)/jTree.Po
 	-rm -f snifd/$(DEPDIR)/listen.Po
+	-rm -f snifd/$(DEPDIR)/map.Po
 	-rm -f snifd/$(DEPDIR)/port.Po
 	-rm -f snifd/$(DEPDIR)/snifd.Po
 	-rm -f snifd/$(DEPDIR)/sock.Po

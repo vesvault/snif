@@ -35,6 +35,7 @@
 #include <openssl/x509.h>
 #include "sock.h"
 #include "port.h"
+#include "map.h"
 #include "cln.h"
 #include "srv.h"
 #include "ctl.h"
@@ -179,7 +180,7 @@ int main(int argc, char **argv, char **env) {
     snif_init();
     char hostname[256];
     if (gethostname(hostname, sizeof(hostname)) < 0) strcpy(hostname, "localhost");
-    char *parse[3];
+    char *parse[4];
     int i;
     const char *host, *port;
     char *snifhost = NULL;
@@ -208,6 +209,14 @@ int main(int argc, char **argv, char **env) {
 		    port = parse[parse[1] ? 1 : 0];
 		    lstn.srv = snif_port(host, port, &lstn, &snif_srv);
 		    if (!lstn.srv) er = E_LSTN;
+		    break;
+		case 'm':
+		    snifd_CHKD()
+		    snifd_CHKA(++i)
+		    if (snifd_parse(4, parse, argv[i]) == 4
+			&& parse[0][0] && parse[1][0] && parse[2][0] && parse[3][0]
+		    ) snif_map_add(parse[0], parse[1], parse[2], parse[3]);
+		    else er = E_VAL;
 		    break;
 		case 'p':
 		    snifd_CHKA(++i)

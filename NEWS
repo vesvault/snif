@@ -1,5 +1,24 @@
 snif NEWS -- history of user-visible changes
 
+Version 1.05
+------------
+
+* relay: static SNI map. `snifd -m sni_host:fwd_port:dst_host:dst_port`
+  (repeatable) forwards the still-encrypted TLS stream for a mapped SNI
+  hostname arriving on the mapped relay port directly to a fixed
+  destination, bypassing connector dispatch; the destination terminates
+  TLS with its own certificate. Set SNIF_RELAY_MAP in etc/snif.conf to
+  have bin/snif-relay pass the mappings to snifd. A mapped hostname
+  arriving on a non-mapped relay port is dropped immediately instead of
+  being held.
+
+* relay: the LISTEN wildcard hostname match is rewritten as an anchored
+  suffix comparison. The previous length/prefix-based check could accept
+  non-matching hostnames and crashed on hostnames containing no dot;
+  hostnames with an empty left label (".example.com") are now rejected.
+
+* build: bin/snif-relay is now installed by `make install`.
+
 Version 1.04
 ------------
 

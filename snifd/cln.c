@@ -40,6 +40,7 @@
 #include "host.h"
 #include "listen.h"
 #include "buf.h"
+#include "map.h"
 #include "cln.h"
 
 
@@ -152,6 +153,11 @@ void snif_cln_pollfn(snif_sock *sock, struct pollfd *pollfd) {
     if (sock->cln.host) {
 	SSL_CTX_free(sock->cln.ctx);
 	sock->cln.ctx = NULL;
+	snif_map *map = snif_map_find(sock->cln.host->hostname, sock->cln.parent->port.port);
+	if (map) {
+	    if (!snif_map_conn(map, sock)) snif_cln_error(sock);
+	    return;
+	}
 	unsigned char connid[16];
 	EVP_MD_CTX *mdctx = EVP_MD_CTX_create();
 	unsigned int mdlen = sizeof(connid);

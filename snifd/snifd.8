@@ -16,6 +16,8 @@ snifd \- SNIF relay and connector daemon (end\-to\-end TLS SNI forwarding)
 .IR in_fifo ]
 .RB [ \-t
 .IR abuse_sense ]
+.RB [ \-m
+.IR sni_host : fwd_port : dst_host : dst_port ]
 .RI [ bind :] fwd_port
 .RI [[ bind :] fwd_port " ...]"
 .br
@@ -83,6 +85,24 @@ Listen for incoming relayed TLS clients on
 .TP
 .BI \-t " abuse_sense"
 Abuse\-detection sensitivity threshold.
+.TP
+.BI \-m " sni_host:fwd_port:dst_host:dst_port"
+Static SNI map entry (repeatable). A TLS client accepted on
+.I fwd_port
+whose SNI exactly matches
+.I sni_host
+is forwarded, still encrypted, to
+.IR dst_host : dst_port
+instead of a SNIF connector. The destination must terminate TLS with a
+certificate valid for
+.IR sni_host .
+A connection with a mapped SNI hostname arriving on a port not mapped for
+that hostname is dropped immediately and is never offered to connectors.
+Lets the relay host serve its own content without an extra relay leg.
+Mirrors
+.I SNIF_RELAY_MAP
+in
+.IR snif.conf .
 .SS Connector options
 .TP
 .BI \-c " cert_file"
