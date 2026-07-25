@@ -1,0 +1,69 @@
+# SNIF Relay — self-hosted stack.
+#
+# Runs your own SNIF relay + CA proxy so devices get publicly trusted HTTPS
+# hostnames under YOUR domain, forwarded still-encrypted (the relay never holds
+# a device key). The public snif.xyz relay is only there so the zero-setup path
+# works — this is how you cut the cord.
+#
+#   1. Point DNS at this host (see docker/README-relay.md):
+#        snif.example.com          A/AAAA  ->  this host
+#        *.snif.example.com        A/AAAA  ->  this host
+#   2. Open ports 80, 443 and 4443 to the internet.
+#   3. Set SNIF_RELAY_DOMAIN below, then:  docker compose -f compose.relay.yaml up -d
+#
+# Build the image from the repo root:
+#   docker build -f Dockerfile.relay -t snif-relay .
+#
+# The `connector` and `web` services below are an OPTIONAL smoke test: a device
+# joining your relay and serving a page. They complete a real certificate only
+# once your DNS is live and the init origin presents a trusted cert — see
+# README-relay.md. Leave them commented until the relay itself is up.
+
+services:
+  relay:
+    build:
+      context: ..
+      dockerfile: Dockerfile.relay
+    image: snif-relay
+    environment:
+      # REQUIRED — your base domain. Devices become snif-XXXX-YYYY.$SNIF_RELAY_DOMAIN
+      SNIF_RELAY_DOMAIN: "snif.example.com"
+      # Public TLS ports the relay accepts clients on (SNI-routed to devices).
+      SNIF_RELAY_PORTS: "443"
+      # HTTPS init / authorization origin port (the snifd -a target).
+      SNIF_INIT_PORT: "4443"
+      # Uncomment while shaking out DNS to use Let's Encrypt staging (untrusted
+      # certs, generous rate limits):
+      # SNIF_LE_STAGING: "1"
+      # Provide a publicly trusted cert for the init origin in production; a
+      # self-signed one is generated otherwise (connectors will reject it).
+      # SNIF_INIT_CERT: /certs/fullchain.pem
+      # SNIF_INIT_KEY:  /certs/privkey.pem
+    ports:
+      - "80:80"        # HTTP-01 ACME challenges + plaintext cert API
+      - "443:443"      # public relay fwd port (SNI-routed TLS)
+      - "4443:4443"    # HTTPS init / authorization origin
+      - "7123:7123"    # SNIF control port (connectors dial in)
+    volumes:
+      - snif-ca:/var/lib/snif/ca-proxy
+      # - ./certs:/certs:ro   # mount a real init-origin cert here
+    restart: unless-stopped
+
+  # --- optional end-to-end smoke test: a device joining YOUR relay -----------
+  # connector:
+  #   image: ghcr.io/vesvault/snif
+  #   depends_on: [relay]
+  #   environment:
+  #     SNIF_CONN_INITURL: "https://snif.example.com:4443/"
+  #     SNIF_CONN_PORTS:   "443:web:^80"
+  #   volumes:
+  #     - snif-conn:/etc/snif
+  #   restart: unless-stopped
+  #
+  # web:
+  #   image: nginx:alpine
+  #   restart: unless-stopped
+
+volumes:
+  snif-ca:
+  # snif-conn:

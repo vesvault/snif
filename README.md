@@ -242,9 +242,14 @@ The connector libraries build as `libsnif`.
 
 ## Run a private SNIF relay
 
-The relay is a standalone deployment (connector + relay `snifd` plus the CA
-proxy). It does not need to be embedded in anything else. See
-[`ca-proxy/README`](ca-proxy/README) for setup instructions.
+Run your own relay to give devices hostnames under your own domain, forwarded
+still-encrypted by a relay you control. The whole stack — relay `snifd` plus the
+CA proxy — is Apache-2.0.
+
+- **Docker:** [`docker/README-relay.md`](docker/README-relay.md) — a one-image
+  relay stack and a `docker compose` file.
+- **From source:** [`ca-proxy/README`](ca-proxy/README) — the underlying setup,
+  including DNS-01 / wildcard issuance and the optional APNS wake-up daemon.
 
 
 ## Contents

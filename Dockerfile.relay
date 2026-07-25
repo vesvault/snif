@@ -1,0 +1,103 @@
+#**************************************************************************
+#     _________
+#    /````````_\                  S N I F ~ e2e TLS trust for IoT
+#   /\     , / O\      ___
+#  | |     | \__|_____/  o\       e2e TLS SNI Forwarder
+#  | |     |  ``/`````\___/       e2e TLS CA Proxy
+#  | |     | . | <"""""""~~
+#  |  \___/ ``  \________/        https://snif.host
+#   \  '''  ``` /````````         (C) 2021-2026 VESvault Corp
+#    \_________/                  Jim Zubov <jz@vesvault.com>
+#
+#
+# Apache License, Version 2.0
+# You may use, copy, modify, merge, publish, distribute and/or sell copies
+# of the Software under the terms of the Apache License, Version 2.0, a copy
+# of which is provided in the COPYING file, or http://www.apache.org/licenses/LICENSE-2.0
+#
+# This software is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR
+# CONDITIONS OF ANY KIND, either express or implied.
+#
+#**************************************************************************
+
+# SNIF Relay container image: the full self-hostable relay stack in one image.
+#
+#   - snifd (relay mode)  forwards still-encrypted TLS by SNI to connectors
+#   - CA proxy (Apache + mod_php)  the CSR / authorization / cert HTTP API
+#   - snif-certd (Perl + Crypt::LE)  issues Let's Encrypt certs for devices
+#
+# The relay never holds a device private key and never terminates device TLS.
+# See docker/README-relay.md for setup and DNS prerequisites.
+
+# ---- build snifd from source (same top-level make as the connector image) ----
+FROM debian:trixie-slim AS build
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        build-essential libtool automake autoconf pkg-config \
+        libssl-dev libcurl4-openssl-dev ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+COPY . /src
+WORKDIR /src
+# Regenerate the autotools output so the build works from any checkout, not just
+# a release tarball (a dev checkout can carry a Makefile.in that predates newly
+# added sources such as snifd/proxy.c).
+RUN autoreconf -fi && ./configure --disable-shared && make && strip snifd/snifd
+
+# ---- runtime: snifd + Apache/PHP CA proxy + Perl ACME daemon ----------------
+FROM debian:trixie-slim
+
+# Apache + mod_php for the CA proxy web API; Perl + the Debian-packaged Crypt::LE
+# dependency tree, then Crypt::LE itself from CPAN (it is not packaged anywhere).
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        apache2 libapache2-mod-php php-cli \
+        openssl libssl3 libcurl4 ca-certificates gosu \
+        perl \
+        libnet-dns-perl \
+        libcrypt-openssl-rsa-perl libcrypt-openssl-bignum-perl \
+        libcrypt-openssl-pkcs10-perl libcrypt-openssl-x509-perl \
+        libconvert-asn1-perl libcrypt-format-perl \
+        libjson-maybexs-perl liblwp-protocol-https-perl \
+        libio-socket-ssl-perl liblog-log4perl-perl \
+        libmodule-load-conditional-perl \
+        cpanminus make gcc libc6-dev \
+    && cpanm --notest --quiet Crypt::LE \
+    && apt-get purge -y cpanminus make gcc libc6-dev \
+    && apt-get autoremove -y \
+    && rm -rf /var/lib/apt/lists/* /root/.cpanm
+
+# The unprivileged account the relay, CA proxy and certd all run as.
+RUN groupadd -g 909 snif \
+    && useradd -r -u 909 -g snif -M -s /usr/sbin/nologin snif
+
+# snifd binary + the relay wrapper + the license.
+COPY --from=build /src/snifd/snifd /usr/bin/snifd
+COPY --from=build /src/bin/snif-relay /usr/bin/snif-relay
+COPY --from=build /src/COPYING /src/NOTICE /usr/share/licenses/snif/
+
+# CA proxy code + the issuance daemons, staged read-only in the image. The
+# entrypoint seeds a fresh /var/lib/snif/ca-proxy volume from this template on
+# first boot, so image upgrades ship new code while device state persists.
+COPY --from=build /src/ca-proxy/public_html   /opt/snif/ca-proxy/public_html
+COPY --from=build /src/ca-proxy/secure_html   /opt/snif/ca-proxy/secure_html
+COPY --from=build /src/ca-proxy/inc           /opt/snif/ca-proxy/inc
+COPY --from=build /src/ca-proxy/README        /opt/snif/ca-proxy/README
+COPY --from=build /src/ca-proxy/bin/snif-certd /usr/bin/snif-certd
+COPY --from=build /src/ca-proxy/bin/snif-arc   /usr/bin/snif-arc
+RUN chmod 0755 /usr/bin/snif-certd /usr/bin/snif-arc /usr/bin/snif-relay
+
+COPY --chmod=755 docker/snif-relay-entrypoint.sh /usr/bin/snif-relay-entrypoint
+
+LABEL org.opencontainers.image.title="SNIF Relay"
+LABEL org.opencontainers.image.description="Self-hostable SNIF relay: forwards still-encrypted TLS by SNI to devices behind NAT and issues their certificates, without ever holding a device key"
+LABEL org.opencontainers.image.url="https://snif.host"
+LABEL org.opencontainers.image.source="https://github.com/vesvault/snif"
+LABEL org.opencontainers.image.licenses="Apache-2.0"
+
+# Persistent CA proxy state: account key, issued certs, device configs, FIFOs.
+VOLUME /var/lib/snif/ca-proxy
+
+# 7123 = SNIF control port (connectors dial in); 443 = default relay fwd port
+# (public TLS clients); 4443 = HTTPS init/authorization origin; 80 = HTTP-01
+# ACME challenges + the plaintext cert API.
+EXPOSE 80 443 4443 7123
+
+ENTRYPOINT ["snif-relay-entrypoint"]

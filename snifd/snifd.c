@@ -215,8 +215,15 @@ int main(int argc, char **argv, char **env) {
 		    snifd_CHKA(++i)
 		    if (snifd_parse(4, parse, argv[i]) == 4
 			&& parse[0][0] && parse[1][0] && parse[2][0] && parse[3][0]
-		    ) snif_map_add(parse[0], parse[1], parse[2], parse[3]);
-		    else er = E_VAL;
+		    ) {
+			int mflags = 0;
+			while (*parse[3] == '+') {
+			    mflags |= SNIF_MAP_F_PROXY;
+			    parse[3]++;
+			}
+			if (*parse[3]) snif_map_add(parse[0], parse[1], parse[2], parse[3], mflags);
+			else er = E_VAL;
+		    } else er = E_VAL;
 		    break;
 		case 'p':
 		    snifd_CHKA(++i)
@@ -288,8 +295,10 @@ int main(int argc, char **argv, char **env) {
 	    wports[widx].flags = 0;
 	    char **pport = parse + (parse[2] ? 2 : (parse[1] ? 1 : 0));
 	    if (*pport) {
-		if (**pport == '^') {
-		    wports[widx].flags |= SNIF_WF_TERMTLS;
+		while (1) {
+		    if (**pport == '^') wports[widx].flags |= SNIF_WF_TERMTLS;
+		    else if (**pport == '+') wports[widx].flags |= SNIF_WF_PROXY;
+		    else break;
 		    (*pport)++;
 		}
 	    }

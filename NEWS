@@ -1,5 +1,20 @@
 snif NEWS -- history of user-visible changes
 
+Version 1.06
+------------
+
+* PROXY protocol v1: a `+` prefix on the destination port of a connector
+  port mapping (SNIF_CONN_PORTS, combines with `^`, e.g. `443:+8443` or
+  `8080:^+80`) or of a relay static SNI map entry (SNIF_RELAY_MAP /
+  `-m ...:+dst_port`) prepends a HAProxy PROXY protocol v1 line
+  (`PROXY TCP4|TCP6 src dst sport dport`) to the forwarded stream, so the
+  destination service learns the original client address instead of
+  seeing every connection as coming from localhost. The destination
+  listener must be configured to expect the PROXY header (nginx
+  `proxy_protocol`, Apache mod_remoteip, Postfix, Dovecot, HAProxy, ...).
+  On the connector the client address is as reported by the relay; on a
+  relay map both addresses are taken first-hand from the client socket.
+
 Version 1.05
 ------------
 

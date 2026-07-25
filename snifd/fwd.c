@@ -40,6 +40,7 @@
 #include "../lib/conn.h"
 #include "../lib/cert.h"
 #include "util.h"
+#include "proxy.h"
 #include "fwd.h"
 
 
@@ -112,8 +113,10 @@ void snif_fwd_pollfn(snif_sock *sock, struct pollfd *pollfd) {
 	    }
 	}
 	sock->rd = snif_buf_new(SNIF_FWD_BUFSIZE);
-	if (sock->peer) sock->peer->wr = sock->rd;
-	else snif_fwd_test(sock);
+	if (sock->peer) {
+	    if (sock->fwd.proxy[0]) snif_buf_append(sock->rd, sock->fwd.proxy, strlen(sock->fwd.proxy));
+	    sock->peer->wr = sock->rd;
+	} else snif_fwd_test(sock);
 	snif_sock_update(sock, pollfd);
     }
     if (snif_sock_rw(sock, pollfd, sock->fwd.ssl) > 0) {
@@ -170,7 +173,10 @@ snif_sock *snif_fwd(snif_conn *conn, snif_watch_port *wp, snif_cert *cert, snif_
 	if (sklcl) snif_sock_done(sklcl);
 	return NULL;
     }
-    snif_sock *skfwd = malloc(offsetof(snif_sock, fwd) + sizeof(skfwd->fwd));
+    char proxy[SNIF_PROXY_MAXHDR];
+    proxy[0] = 0;
+    if (sklcl && (wp->flags & SNIF_WF_PROXY)) snif_proxy_fwdhdr(proxy, sizeof(proxy), conn->cln.host, conn->cln.port, sklcl->fd);
+    snif_sock *skfwd = malloc(offsetof(snif_sock, fwd) + sizeof(skfwd->fwd) + strlen(proxy));
     skfwd->fd = fd;
     skfwd->pollfn = &snif_fwd_pollfn;
     skfwd->listen = lstn;
@@ -178,6 +184,7 @@ snif_sock *snif_fwd(snif_conn *conn, snif_watch_port *wp, snif_cert *cert, snif_
     skfwd->fwd.ssl = NULL;
     skfwd->fwd.cert = cert;
     skfwd->fwd.port = wp;
+    strcpy(skfwd->fwd.proxy, proxy);
     skfwd->peer = sklcl;
     if (sklcl) sklcl->peer = skfwd;
     skfwd->wr = snif_buf_new(SNIF_FWD_BUFSIZE);

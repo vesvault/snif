@@ -86,6 +86,7 @@ typedef struct snif_sock {
 		    struct snif_cert *cert;
 		    void *ssl;
 		    struct snif_watch_port *port;
+		    char proxy[1];
 		} fwd;
 		void *ref;
 	    };

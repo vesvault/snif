@@ -13,6 +13,7 @@ snifd/fifo.c \
 snifd/abuse.c \
 snifd/watch.c \
 snifd/fwd.c \
+snifd/proxy.c \
 snifd/util.c \
 snifd/jTree.c \
 snifd/help.c \
@@ -31,6 +32,7 @@ snifd/fifo.h \
 snifd/abuse.h \
 snifd/watch.h \
 snifd/fwd.h \
+snifd/proxy.h \
 snifd/util.h \
 snifd/jTree.h \
 snifd/help.h

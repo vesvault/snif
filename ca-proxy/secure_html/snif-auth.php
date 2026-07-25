@@ -21,8 +21,6 @@
  *
  **************************************************************************/
 
-$AuthPageUrl = "https://snif.host/auth?authUrl=";
-
 $BaseDir = $_SERVER['DOCUMENT_ROOT'] . '/..';
 $EtcDir = "$BaseDir/etc";
 $CfgDir = "$BaseDir/cfg";
@@ -90,6 +88,14 @@ if (isset($_POST['cf-turnstile-response']) || isset($_SERVER['HTTP_X_SNIF_CAPTCH
 	# paired with the etc/turnstile.secret the captcha verifier checks against)
 	# the page presents Turnstile, so its token verifies against the same
 	# account. Absent either half, it defaults to VES.
+	# The interactive page origin is per-<base domain> config
+	# (etc/<base>.authpage), then a server-wide etc/authpage, then the public
+	# SNIF page. The value is the full prefix up to and including "?authUrl=".
+	$AuthBase = preg_replace('/^[^.]*\./', '', $cn);
+	$pagefile = file_exists("$EtcDir/$AuthBase.authpage") ? "$EtcDir/$AuthBase.authpage"
+	    : (file_exists("$EtcDir/authpage") ? "$EtcDir/authpage" : null);
+	$AuthPageUrl = $pagefile ? trim(file_get_contents($pagefile)) : "";
+	if ($AuthPageUrl === "") $AuthPageUrl = "https://snif.host/auth?authUrl=";
 	$loc = $AuthPageUrl . "https://" . $_SERVER['HTTP_HOST'] . $_SERVER['REQUEST_URI'];
 	$sitekey = @trim(file_get_contents("$EtcDir/turnstile.sitekey"));
 	if ($sitekey && file_exists("$EtcDir/turnstile.secret")) {

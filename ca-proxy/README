@@ -44,6 +44,31 @@ etc/{SNIF_initialization_domain}.domains contains the list of {domain} names
 etc/{SNIF_domain}.tsig must contain a DDNS TSIG that permits managing IN TXT
     RRs for snif-pool.{SNIF_domain} for CA domain verification.
 
+The following per-domain settings are keyed on {SNIF_domain} (the base domain,
+    as in the .domains/.tsig files above). Each falls back to a server-wide file
+    of the same name without the domain prefix, then to a built-in default, so a
+    single-domain relay can use the server-wide file and leave the rest unset.
+
+etc/{SNIF_domain}.keyalgo (optional) sets the private key algorithm the
+    connector generates for certificates under this domain: RSA[:bits],
+    EC[:curve] (e.g. EC:P-256), ED25519 or ED448. Returned to the connector as
+    X-SNIF-KeyAlgo so it can steer local key generation; the proxy never sees
+    the key. Falls back to etc/keyalgo, then to the connector default (RSA).
+
+etc/{SNIF_domain}.authurl (optional) overrides the base authorization URL
+    advertised to the connector (X-SNIF-AuthUrl) - the HTTPS initialization
+    origin it polls, e.g. https://snif.example.com:4443/ . A trailing slash is
+    enforced and the certificate CN is appended to it. Falls back to
+    etc/authurl, then to the public snif.snif.xyz initialization origin. Set
+    this on a self-hosted relay so devices are pointed back at your own origin
+    rather than snif.snif.xyz.
+
+etc/{SNIF_domain}.authpage (optional) overrides the interactive authorization
+    page a connector's browser is redirected to when no credential is presented.
+    The value is the full URL prefix up to and including the query parameter,
+    e.g. https://snif.example.com/auth?authUrl= (the connector's polling URL is
+    appended). Falls back to etc/authpage, then to https://snif.host/auth .
+
 etc/turnstile.secret and etc/turnstile.sitekey enable the optional Cloudflare
     Turnstile CAPTCHA authorization for the interactive certificate
     authorization page (the in-browser counterpart of VES vaultItem auth).
@@ -61,8 +86,10 @@ snif-certd daemon needs to be launched on the server start to process
     the certificate issuance for SNIF connectors.
 
 snif-arc needs to be launched periodically, recommended once a day via
-    crontab, to archive expiring certificates and manitain automatic
-    certificate reissuance.
+    crontab, to archive aging certificates: it moves any certificate older than
+    75 days out of crt/ into a dated folder under arc/. It does not reissue
+    anything - removing the stale certificate is what lets snif-certd issue a
+    fresh one the next time the connector requests it.
 
 snif-apnsd is an optional process that sends APNS notifications to wake up
     a sleeping iOS device to serve an incoming connection, as long as the

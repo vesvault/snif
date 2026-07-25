@@ -31,6 +31,7 @@ typedef struct snif_watch_port {
 } snif_watch_port;
 
 #define	SNIF_WF_TERMTLS		0x01
+#define	SNIF_WF_PROXY		0x02
 
 struct snif_cert;
 struct snif_listen;

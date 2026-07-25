@@ -21,9 +21,6 @@
  *
  **************************************************************************/
 
-# Set the base AuthUrl for the certificate authorization
-$AuthUrl = "https://snif.snif.xyz:4443/";
-
 $BasePath = $_SERVER['DOCUMENT_ROOT'] . "/..";
 
 $CfgPath = "$BasePath/cfg";
@@ -48,6 +45,18 @@ if (!preg_match('/^\w([\.\-]?\w)*$/', $Domain)) {
     header('HTTP/1.0 400 Bad Request');
     exit;
 }
+
+# The base AuthUrl advertised to the connector (X-SNIF-AuthUrl) is per-<base
+# domain> configuration, matching etc/<base>.keyalgo / etc/<base>.tsig: read
+# etc/<base>.authurl, then a server-wide etc/authurl, then fall back to the
+# public SNIF initialization origin. A trailing slash is enforced (the CN is
+# appended to it).
+$AuthBase = preg_replace('/^[^.]*\./', '', $Domain);
+$authfile = file_exists("$BasePath/etc/$AuthBase.authurl") ? "$BasePath/etc/$AuthBase.authurl"
+    : (file_exists("$BasePath/etc/authurl") ? "$BasePath/etc/authurl" : null);
+$AuthUrl = $authfile ? trim(file_get_contents($authfile)) : "";
+if ($AuthUrl === "") $AuthUrl = "https://snif.snif.xyz:4443/";
+$AuthUrl = rtrim($AuthUrl, "/") . "/";
 
 if ($_SERVER['REQUEST_URI'] == "/snif-cert/$Domain.csr") {
     $csr_file = "$CSRPath/$Domain.csr";

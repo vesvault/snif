@@ -29,8 +29,11 @@ typedef struct snif_map {
     const char *port;
     const char *dsthost;
     const char *dstport;
+    int flags;
 } snif_map;
 
-snif_map *snif_map_add(char *host, const char *port, const char *dsthost, const char *dstport);
+#define	SNIF_MAP_F_PROXY	0x02
+
+snif_map *snif_map_add(char *host, const char *port, const char *dsthost, const char *dstport, int flags);
 snif_map *snif_map_find(const char *host, const char *port);
 struct snif_sock *snif_map_conn(snif_map *map, struct snif_sock *cln);

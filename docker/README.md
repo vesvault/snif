@@ -161,9 +161,10 @@ the app at the files there.
 
 ## Self-hosted relay
 
-Set `SNIF_CONN_INITURL` (and `SNIF_CONN_APIURL` if your relay requires it) to
-your own relay — see [`ca-proxy/README`](../ca-proxy/README) for running one.
-Everything else works the same.
+Point `SNIF_CONN_INITURL` (and `SNIF_CONN_APIURL` if your relay requires it) at
+your own relay and everything else works the same. The relay side ships as its
+own container — see [README-relay.md](README-relay.md) for a `docker compose`
+stack, or [`ca-proxy/README`](../ca-proxy/README) for a from-source setup.
 
 
 ## Build the image locally

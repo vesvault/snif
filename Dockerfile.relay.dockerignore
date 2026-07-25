@@ -1,0 +1,9 @@
+# Build context for the SNIF Relay image. Unlike the connector image
+# (.dockerignore), the relay MUST include ca-proxy/ — it ships the CA proxy web
+# API and the snif-certd issuance daemon.
+.git
+.github
+_tmp
+etc/*.md
+Dockerfile
+Dockerfile.relay

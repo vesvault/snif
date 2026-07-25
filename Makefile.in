@@ -113,7 +113,8 @@ am__objects_1 = snifd/listen.$(OBJEXT) snifd/sock.$(OBJEXT) \
 	snifd/port.$(OBJEXT) snifd/host.$(OBJEXT) snifd/map.$(OBJEXT) \
 	snifd/buf.$(OBJEXT) snifd/ctl.$(OBJEXT) snifd/cln.$(OBJEXT) \
 	snifd/srv.$(OBJEXT) snifd/fifo.$(OBJEXT) snifd/abuse.$(OBJEXT) \
-	snifd/watch.$(OBJEXT) snifd/fwd.$(OBJEXT) snifd/util.$(OBJEXT) \
+	snifd/watch.$(OBJEXT) snifd/fwd.$(OBJEXT) \
+	snifd/proxy.$(OBJEXT) snifd/util.$(OBJEXT) \
 	snifd/jTree.$(OBJEXT) snifd/help.$(OBJEXT) \
 	snifd/snifd.$(OBJEXT)
 am__objects_2 =
@@ -172,9 +173,9 @@ am__depfiles_remade = snifd/$(DEPDIR)/abuse.Po snifd/$(DEPDIR)/buf.Po \
 	snifd/$(DEPDIR)/help.Po snifd/$(DEPDIR)/host.Po \
 	snifd/$(DEPDIR)/jTree.Po snifd/$(DEPDIR)/listen.Po \
 	snifd/$(DEPDIR)/map.Po snifd/$(DEPDIR)/port.Po \
-	snifd/$(DEPDIR)/snifd.Po snifd/$(DEPDIR)/sock.Po \
-	snifd/$(DEPDIR)/srv.Po snifd/$(DEPDIR)/util.Po \
-	snifd/$(DEPDIR)/watch.Po
+	snifd/$(DEPDIR)/proxy.Po snifd/$(DEPDIR)/snifd.Po \
+	snifd/$(DEPDIR)/sock.Po snifd/$(DEPDIR)/srv.Po \
+	snifd/$(DEPDIR)/util.Po snifd/$(DEPDIR)/watch.Po
 am__mv = mv -f
 COMPILE = $(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) \
 	$(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS)
@@ -433,6 +434,7 @@ snifd/fifo.c \
 snifd/abuse.c \
 snifd/watch.c \
 snifd/fwd.c \
+snifd/proxy.c \
 snifd/util.c \
 snifd/jTree.c \
 snifd/help.c \
@@ -451,6 +453,7 @@ snifd/fifo.h \
 snifd/abuse.h \
 snifd/watch.h \
 snifd/fwd.h \
+snifd/proxy.h \
 snifd/util.h \
 snifd/jTree.h \
 snifd/help.h
@@ -592,6 +595,8 @@ snifd/watch.$(OBJEXT): snifd/$(am__dirstamp) \
 	snifd/$(DEPDIR)/$(am__dirstamp)
 snifd/fwd.$(OBJEXT): snifd/$(am__dirstamp) \
 	snifd/$(DEPDIR)/$(am__dirstamp)
+snifd/proxy.$(OBJEXT): snifd/$(am__dirstamp) \
+	snifd/$(DEPDIR)/$(am__dirstamp)
 snifd/util.$(OBJEXT): snifd/$(am__dirstamp) \
 	snifd/$(DEPDIR)/$(am__dirstamp)
 snifd/jTree.$(OBJEXT): snifd/$(am__dirstamp) \
@@ -659,6 +664,7 @@ distclean-compile:
 @AMDEP_TRUE@@am__include@ @am__quote@snifd/$(DEPDIR)/listen.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@snifd/$(DEPDIR)/map.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@snifd/$(DEPDIR)/port.Po@am__quote@ # am--include-marker
+@AMDEP_TRUE@@am__include@ @am__quote@snifd/$(DEPDIR)/proxy.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@snifd/$(DEPDIR)/snifd.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@snifd/$(DEPDIR)/sock.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@snifd/$(DEPDIR)/srv.Po@am__quote@ # am--include-marker
@@ -1151,6 +1157,7 @@ distclean: distclean-recursive
 	-rm -f snifd/$(DEPDIR)/listen.Po
 	-rm -f snifd/$(DEPDIR)/map.Po
 	-rm -f snifd/$(DEPDIR)/port.Po
+	-rm -f snifd/$(DEPDIR)/proxy.Po
 	-rm -f snifd/$(DEPDIR)/snifd.Po
 	-rm -f snifd/$(DEPDIR)/sock.Po
 	-rm -f snifd/$(DEPDIR)/srv.Po
@@ -1216,6 +1223,7 @@ maintainer-clean: maintainer-clean-recursive
 	-rm -f snifd/$(DEPDIR)/listen.Po
 	-rm -f snifd/$(DEPDIR)/map.Po
 	-rm -f snifd/$(DEPDIR)/port.Po
+	-rm -f snifd/$(DEPDIR)/proxy.Po
 	-rm -f snifd/$(DEPDIR)/snifd.Po
 	-rm -f snifd/$(DEPDIR)/sock.Po
 	-rm -f snifd/$(DEPDIR)/srv.Po

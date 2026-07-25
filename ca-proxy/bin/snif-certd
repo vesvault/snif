@@ -24,6 +24,22 @@
 
 use Crypt::LE;
 
+# Compatibility shim: Crypt::OpenSSL::RSA >= 0.35 refuses use_pkcs1_padding as a
+# Marvin-attack mitigation (which targets PKCS#1 v1.5 *decryption*). Crypt::LE
+# calls it while preparing the ACME account key, which only ever *signs* (RS256)
+# - an operation unaffected by that padding mode. Wrap the call so certificate
+# issuance works on modern distros, while still honoring it where it functions.
+use Crypt::OpenSSL::RSA ();
+{
+    no warnings 'redefine';
+    if (my $orig = Crypt::OpenSSL::RSA->can('use_pkcs1_padding')) {
+	*Crypt::OpenSSL::RSA::use_pkcs1_padding = sub {
+	    eval { $orig->(@_) };
+	    return 1;
+	};
+    }
+}
+
 # The following line can be disabled if only single domain certificates with
 # HTTP verification are being issued
 use Net::DNS;

@@ -56,7 +56,7 @@ const char *snif_help =
 "  \x1b[1msnifd\x1b[0m \x1b[2;36m[\x1b[0m-l \x1b[2;36m[\x1b[0mbind:\x1b[2;36m]\x1b[0msnif_port\x1b[2;36m]\x1b[0m"
 " \x1b[2;36m[\x1b[0m-s \x1b[2;36m[\x1b[0mbind:\x1b[2;36m]\x1b[0mrelay_port\x1b[2;36m]\x1b[0m"
 " \x1b[2;36m[\x1b[0m-p push_fifo\x1b[2;36m]\x1b[0m \x1b[2;36m[\x1b[0m-i in_fifo\x1b[2;36m]\x1b[0m\n"
-"\t\x1b[2;36m[\x1b[0m-m sni_host:fwd_port:dst_host:dst_port\x1b[2;36m]\x1b[0m"
+"\t\x1b[2;36m[\x1b[0m-m sni_host:fwd_port:dst_host:\x1b[2;36m[\x1b[0m+\x1b[2;36m]\x1b[0mdst_port\x1b[2;36m]\x1b[0m"
 " \x1b[2;36m[\x1b[0m-t abuse_sense\x1b[2;36m]\x1b[0m"
 " \x1b[2;36m[\x1b[0mbind:\x1b[2;36m]\x1b[0m\x1b[1mfwd_port\x1b[0m"
 " \x1b[2;36m[[\x1b[0mbind:\x1b[2;36m]\x1b[0mfwd_port\x1b[2;36m] ...\x1b[0m\n"
@@ -71,8 +71,8 @@ const char *snif_help =
 "  SNIF Connector Daemon Mode (can be combined with Initialization):\n"
 "  \x1b[1msnifd\x1b[0m \x1b[2;36m[\x1b[0m-d\x1b[2;36m]\x1b[0m \x1b[1m-c cert_file -k pkey_file\x1b[0m \x1b[2;36m[\x1b[0m-r snif_host\x1b[2;36m[\x1b[0m:relay_port\x1b[2;36m]]\x1b[0m\n"
 "\t\x1b[2;36m[\x1b[0m-p push_fifo\x1b[2;36m]\x1b[0m \x1b[2;36m[\x1b[0m-i in_fifo\x1b[2;36m]\x1b[0m \x1b[2;36m[\x1b[0mfwd_test_port:^\x1b[2;36m]\x1b[0m\n"
-"\t\x1b[2;36m[\x1b[0mfwd_port:\x1b[2;36m[\x1b[0mdst_host:\x1b[2;36m]]\x1b[0m\x1b[1mdst_tls_port\x1b[0m"
-" \x1b[2;36m| [\x1b[0mfwd_port:\x1b[2;36m[\x1b[0mdst_host:\x1b[2;36m]]\x1b[0m\x1b[1m^dst_plain_port\x1b[0m \x1b[2;36m...\x1b[0m\n"
+"\t\x1b[2;36m[\x1b[0mfwd_port:\x1b[2;36m[\x1b[0mdst_host:\x1b[2;36m]][\x1b[0m+\x1b[2;36m]\x1b[0m\x1b[1mdst_tls_port\x1b[0m"
+" \x1b[2;36m| [\x1b[0mfwd_port:\x1b[2;36m[\x1b[0mdst_host:\x1b[2;36m]]\x1b[0m\x1b[1m^\x1b[0m\x1b[2;36m[\x1b[0m+\x1b[2;36m]\x1b[0m\x1b[1mdst_plain_port\x1b[0m \x1b[2;36m...\x1b[0m\n"
  "\n"
  ;
 

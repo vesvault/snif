@@ -29,12 +29,13 @@
 #include "listen.h"
 #include "buf.h"
 #include "srv.h"
+#include "proxy.h"
 #include "map.h"
 
 
 snif_map *snif_map_list = NULL;
 
-snif_map *snif_map_add(char *host, const char *port, const char *dsthost, const char *dstport) {
+snif_map *snif_map_add(char *host, const char *port, const char *dsthost, const char *dstport, int flags) {
     snif_map *map = malloc(sizeof(*map));
     char *s;
     for (s = host; *s; s++) if (*s >= 'A' && *s <= 'Z') *s |= 0x20;
@@ -42,13 +43,14 @@ snif_map *snif_map_add(char *host, const char *port, const char *dsthost, const 
     map->port = port;
     map->dsthost = dsthost;
     map->dstport = dstport;
+    map->flags = flags;
     map->chain = snif_map_list;
     return snif_map_list = map;
 }
 
 /* host matched but no port entry: sentinel with a NULL dsthost,
  * snif_map_conn() fails on it so the client is dropped right away */
-static snif_map snif_map_drop = {NULL, NULL, NULL, NULL, NULL};
+static snif_map snif_map_drop = {NULL, NULL, NULL, NULL, NULL, 0};
 
 snif_map *snif_map_find(const char *host, const char *port) {
     snif_map *map;
@@ -82,6 +84,23 @@ snif_sock *snif_map_conn(snif_map *map, snif_sock *cln) {
     printf("snif_map_conn fd=%d %s:%s\n", fd, map->dsthost, map->dstport);
 #endif
     if (fd < 0) return NULL;
+    if (map->flags & SNIF_MAP_F_PROXY) {
+	char hdr[SNIF_PROXY_MAXHDR];
+	int hl = snif_proxy_clnhdr(hdr, sizeof(hdr), cln->fd);
+	snif_buf *rb = cln->rd;
+	/* the peeked ClientHello is already buffered in cln->rd,
+	 * the PROXY line must be prepended ahead of it */
+	if (hl > 0 && rb) {
+	    if (rb->len + hl > rb->max) {
+		rb->max = rb->len + hl;
+		rb = realloc(rb, sizeof(*rb) + rb->max);
+		cln->rd = rb;
+	    }
+	    memmove(rb->buf + hl, rb->buf, rb->len);
+	    memcpy(rb->buf, hdr, hl);
+	    rb->len += hl;
+	}
+    }
     snif_sock *sock = malloc(offsetof(snif_sock, srv) + sizeof(sock->srv));
     sock->fd = fd;
     sock->pollfn = &snif_map_pollfn;

@@ -38,8 +38,8 @@ snifd \- SNIF relay and connector daemon (end\-to\-end TLS SNI forwarding)
 .I pkey_file
 .RB [ \-r
 .IR snif_host [: relay_port ]]
-.RI [ fwd_port :[ dst_host :]] dst_tls_port
-.RI "| [" fwd_port :[ dst_host :]]^ dst_plain_port " ..."
+.RI [ fwd_port :[ dst_host :]][+] dst_tls_port
+.RI "| [" fwd_port :[ dst_host :]]^[+] dst_plain_port " ..."
 .SH DESCRIPTION
 .B snifd
 is the core SNIF daemon. SNIF gives a device behind NAT a publicly trusted
@@ -86,7 +86,7 @@ Listen for incoming relayed TLS clients on
 .BI \-t " abuse_sense"
 Abuse\-detection sensitivity threshold.
 .TP
-.BI \-m " sni_host:fwd_port:dst_host:dst_port"
+.BI \-m " sni_host:fwd_port:dst_host:[+]dst_port"
 Static SNI map entry (repeatable). A TLS client accepted on
 .I fwd_port
 whose SNI exactly matches
@@ -99,6 +99,14 @@ certificate valid for
 A connection with a mapped SNI hostname arriving on a port not mapped for
 that hostname is dropped immediately and is never offered to connectors.
 Lets the relay host serve its own content without an extra relay leg.
+A
+.B +
+prefix on
+.I dst_port
+prepends a PROXY protocol v1 header (see
+.BR "PROXY PROTOCOL" )
+carrying the client's address to the forwarded stream; the addresses are
+taken first\-hand from the accepted client socket.
 Mirrors
 .I SNIF_RELAY_MAP
 in
@@ -175,6 +183,37 @@ Terminate TLS and forward plaintext to
 .TP
 .I fwd_test_port:^
 Serve the built\-in HTTPS test responder.
+.PP
+A
+.B +
+prefix on the destination port (combining with
+.BR ^ ,
+e.g.
+.IR 443:+8443 " or " 8080:^+80 )
+prepends a PROXY protocol v1 header to the forwarded stream; see
+.BR "PROXY PROTOCOL" .
+.SH PROXY PROTOCOL
+Without it, the destination service sees every relayed connection as
+originating from the forwarding
+.B snifd
+(typically localhost). A
+.B +
+destination\-port prefix makes
+.B snifd
+send a HAProxy PROXY protocol v1 line
+.RI ( "PROXY TCP4|TCP6 src_addr dst_addr src_port dst_port" )
+ahead of the forwarded bytes, so the destination learns the original client
+address. The destination listener must be configured to expect the header
+(nginx
+.IR proxy_protocol ,
+Apache
+.IR mod_remoteip ,
+Postfix, Dovecot, HAProxy, ...); a listener expecting the header rejects
+plain connections, so use a dedicated, loopback\-bound or firewalled port.
+In connector mode the client address is as reported by the relay and is
+only as trustworthy as the relay; suitable for logging, rate limiting or
+geo lookups rather than as a sole access\-control input. On a relay static
+map the addresses are taken first\-hand from the accepted client socket.
 .SH FILES
 .TP
 .I /etc/snif/snif.conf
