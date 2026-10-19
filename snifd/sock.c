@@ -23,12 +23,14 @@
 #include <sys/types.h>
 #include <stddef.h>
 #include <string.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <poll.h>
 #include <sys/socket.h>
 #include <netdb.h>
 #include <fcntl.h>
 #include <unistd.h>
+#include <errno.h>
 #include "buf.h"
 #include "listen.h"
 #include "util.h"
@@ -84,6 +86,21 @@ int snif_sock_accept(snif_sock *sock, int abuse) {
     return fd;
 }
 
+int snif_sock_connwait(int fd) {
+    struct pollfd pfd = {
+	.fd = fd,
+	.events = POLLOUT,
+	.revents = 0
+    };
+    int r;
+    while ((r = poll(&pfd, 1, SNIF_SOCK_CONNTMOUT)) < 0 && errno == EINTR);
+    if (r <= 0) return -1;
+    int er = 0;
+    socklen_t l = sizeof(er);
+    if (getsockopt(fd, SOL_SOCKET, SO_ERROR, &er, &l) < 0 || er) return -1;
+    return 0;
+}
+
 int snif_sock_connect(const char *host, const char *port) {
     struct addrinfo hint = {
 	.ai_family = AF_UNSPEC,
@@ -103,10 +120,10 @@ int snif_sock_connect(const char *host, const char *port) {
     for (a = ai; a; a = a->ai_next) {
 	fd = socket(a->ai_family, a->ai_socktype, a->ai_protocol);
 	if (fd < 0) continue;
-	if (connect(fd, a->ai_addr, a->ai_addrlen) >= 0) {
-	    snif_sock_setnb(fd);
-	    break;
-	}
+	snif_sock_setnb(fd);
+	if (connect(fd, a->ai_addr, a->ai_addrlen) >= 0
+	    || (errno == EINPROGRESS && snif_sock_connwait(fd) >= 0)
+	) break;
 	close(fd);
 	fd = -1;
     }

@@ -25,7 +25,9 @@
 use Net::APNS::Simple;
 use MIME::Base64;
 
-$BaseDir = `. /etc/snif.conf; echo -n \$SNIF_CA_PROXY;`;
+# SNIF_CA_PROXY in the environment overrides /etc/snif.conf, e.g. to run an
+# isolated instance against a scratch CA proxy tree.
+$BaseDir = $ENV{SNIF_CA_PROXY} || `. /etc/snif.conf; echo -n \$SNIF_CA_PROXY;`;
 
 $EtcDir = "$BaseDir/etc";
 $ApnsDir = "$BaseDir/apns";
@@ -85,11 +87,36 @@ sub apns_fname {
     return "$ApnsDir/_" . substr($host, $MaskChars) . ".apns";
 }
 
+# Written to a temp file and renamed into place, so a reader never sees a
+# partial token. The old file's access time is kept: host_check reads it as the
+# time of the last wake.
 sub host_set_apns {
     my ($host, $apns) = @_;
-    open APNS, ">" . apns_fname($host);
-    print APNS $apns;
-    close APNS;
+    my $f = apns_fname($host);
+    my @st = stat $f;
+    open(my $fh, '>', "$f+") || return;
+    print $fh $apns;
+    close($fh) || return;
+    utime($st[8], time, "$f+") if @st;
+    rename("$f+", $f) && sync_enqueue("apns/" . substr($f, length("$ApnsDir/")));
+}
+
+# A node of a relay cluster names itself in etc/cluster.node (doc/cluster.md):
+# a wake token stored here is queued for every peer, as a link in each
+# sync-queue/<peer>/, since the wake goes out from whichever node a client
+# reaches. Needs no running snif-syncd; the SYNC only wakes it.
+sub sync_enqueue {
+    my ($rel) = @_;
+    return if !-e "$EtcDir/cluster.node";
+    foreach my $q (grep { -d } glob("$BaseDir/sync-queue/*")) {
+	mkdir "$q/apns", 02775 if !-d "$q/apns";
+	symlink("$BaseDir/$rel", "$q/$rel");
+    }
+    require IO::Socket::UNIX;
+    if (my $s = IO::Socket::UNIX->new(Peer => "$BaseDir/var/snif-syncd.sock", Type => Socket::SOCK_STREAM())) {
+	print $s "SYNC\n";
+	close $s;
+    }
 }
 
 sub host_check {
@@ -114,6 +141,8 @@ sub dlog {
     printf $log "%02d/%02d/%02d %02d:%02d:%02d [%d]: %s\n", $t[4] + 1, $t[3], $t[5] % 100, $t[2], $t[1], $t[0], $$, $msg;
 }
 
+# Loaded rather than run (e.g. by a test with do/require): define the subs only.
+return 1 if caller;
 
 close STDERR;
 open STDERR, ">>$LogDir/log_snif-apnsd";

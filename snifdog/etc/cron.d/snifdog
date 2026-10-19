@@ -1,11 +1,18 @@
 # snifdog -- SNIF CA Transparency watchdog, cron mode.
 #
-# Run one incremental CT pass every 15 minutes. `snifdog poll` exits non-zero
-# (2) when it raises a NEW alert, so cron mails the run output to MAILTO on a
-# detection (in addition to snifdog's own syslog / webhook / email sinks).
+# Run one incremental CT pass every 15 minutes for every configuration:
+# /etc/snif/snifdog.conf if it exists, and each /etc/snif/snifdog.d/*.conf,
+# normally one per base domain. Each configuration keeps its own state
+# directory, and a pass whose previous run on the same configuration is still
+# going skips quietly. To move a one-base install to the directory, move its
+# snifdog.conf there (do not copy it), keeping its SNIFDOG_DIR.
 #
-# Use this instead of the systemd `snifdog watch` unit, not alongside it.
+# `snifdog poll` exits non-zero (2) when it raises a NEW alert, so cron mails
+# the run output to MAILTO on a detection (in addition to snifdog's own syslog
+# / webhook / email sinks).
+#
+# Use this instead of the systemd `snifdog watch` units, not alongside them.
 
 MAILTO=root
 
-*/15 * * * *  snif  /usr/bin/snifdog poll
+*/15 * * * *  snif  for c in /etc/snif/snifdog.conf /etc/snif/snifdog.d/*.conf; do [ -r "$c" ] && SNIFDOG_CONF="$c" /usr/bin/snifdog poll; done

@@ -21,6 +21,11 @@
  **************************************************************************/
 
 
+/* Max CONNECT lines held from input FIFOs for hosts with no control connection here */
+#ifndef SNIF_HOST_MAXHELD
+#define	SNIF_HOST_MAXHELD	4096
+#endif
+
 typedef struct snif_host {
     struct snif_sock *clients;
     struct snif_sock *ctls;
@@ -31,3 +36,6 @@ struct snif_host *snif_host_get(const char *hostname, int len);
 int snif_host_notifyl(struct snif_host *host, const char *ntfy, int l);
 #define	snif_host_notify(host, ntfy)	snif_host_notifyl(host, ntfy, strlen(ntfy))
 void snif_host_chkalive(snif_host *host);
+void snif_host_hold(struct snif_host *host, const char *connid, const char *ntfy, int l, int tmout);
+void snif_host_unhold(const char *connid);
+void snif_host_sendheld(struct snif_host *host, struct snif_sock *ctl);

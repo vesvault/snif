@@ -23,6 +23,7 @@
 #include <sys/types.h>
 #include <stddef.h>
 #include <string.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <netdb.h>
 #include <netinet/ip.h>

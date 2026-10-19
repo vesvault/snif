@@ -84,12 +84,24 @@ function snif_captcha_quota($ip) {
     $dir = $GLOBALS['CaptchaQuotaDir'];
     if (!is_dir($dir)) @mkdir($dir, 0770, true);
     $day = gmdate('Ymd');
-    $gf = "$dir/day-$day";
-    if ((int)@file_get_contents($gf) >= SNIF_CAPTCHA_DAY_MAX) return false;
-    $kf = "$dir/ip-$day-" . md5($ip);
-    if ((int)@file_get_contents($kf) >= SNIF_CAPTCHA_IP_MAX) return false;
-    @file_put_contents($kf, (int)@file_get_contents($kf) + 1);
-    @file_put_contents($gf, (int)@file_get_contents($gf) + 1);
+    # In a cluster each node counts in its own directory (auth/captcha/<node>)
+    # and the quotas count them all.
+    $sum = function ($name) use ($dir) {
+	$n = 0;
+	foreach (snif_cluster_counter_files($dir, $name) as $f) $n += (int)@file_get_contents($f);
+	return $n;
+    };
+    $gn = "day-$day";
+    if ($sum($gn) >= SNIF_CAPTCHA_DAY_MAX) return false;
+    $kn = "ip-$day-" . md5($ip);
+    if ($sum($kn) >= SNIF_CAPTCHA_IP_MAX) return false;
+    $wd = snif_cluster_counter_dir($dir);
+    @file_put_contents("$wd/$kn", (int)@file_get_contents("$wd/$kn") + 1);
+    @file_put_contents("$wd/$gn", (int)@file_get_contents("$wd/$gn") + 1);
+    if (snif_cluster_node()) {
+	snif_cluster_enqueue("auth/captcha/" . snif_cluster_node() . "/$kn");
+	snif_cluster_enqueue("auth/captcha/" . snif_cluster_node() . "/$gn");
+    }
     return true;
 }
 

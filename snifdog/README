@@ -185,6 +185,23 @@ INSTALL / RUN
   (snifdog poll every 15 min) -- not both. Edit /etc/snif/snifdog.conf first
   (SNIFDOG_BASE, SNIFDOG_MODE, sinks).
 
+  One configuration watches one base domain. To watch several, put one file
+  per base in /etc/snif/snifdog.d/, e.g. snif.xyz.conf and vesmail.xyz.conf.
+  The cron.d entry runs a pass for every file there, and for
+  /etc/snif/snifdog.conf if it exists. For watch mode, enable one template
+  unit per file instead: systemctl enable --now snifdog@vesmail.xyz.
+
+  Each configuration needs its own state directory: the CT cursors and the
+  backfill marker under var/ belong to one base's query. A configuration in
+  snifdog.d defaults to /var/lib/snif/snifdog/<base>; snifdog.conf keeps
+  /var/lib/snif/snifdog. snifdog records the base in var/base and refuses a
+  directory another base owns (exit 78). A pass also locks its directory, so
+  a cron pass that finds the previous one still running skips quietly.
+
+  To move a one-base install into snifdog.d, move (do not copy) snifdog.conf
+  to snifdog.d/<base>.conf and set SNIFDOG_DIR=/var/lib/snif/snifdog in it,
+  so it keeps its pins and cursors.
+
 
 CONTENTS
 
@@ -192,11 +209,13 @@ CONTENTS
   snifdog.8            man page
   DESIGN.md            full design note
   etc/snifdog.conf     configuration (namespace, source, mode, sinks)
-  etc/systemd/         snifdog.service (watch mode)
-  etc/cron.d/          snifdog (poll mode)
+  etc/systemd/         snifdog.service, snifdog@.service (watch mode)
+  etc/cron.d/          snifdog (poll mode, every configuration)
+  test/state.t         state directory, lock and cron loop tests
   lib/Snif/CT/         CT source adapters: CertSpotter.pm, CrtSh.pm
   pins/                one SPKI pin record per watched name/wildcard
-  var/                 per-source cursor + alerted cache (idempotent, cron-safe)
+  var/                 per-source cursor + alerted cache (idempotent, cron-safe),
+                       the owning base (base) and the pass lock (lock)
   evidence/            per-detection evidence bundles
   mkdirs               create the runtime directories
 

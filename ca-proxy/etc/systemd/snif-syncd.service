@@ -1,0 +1,13 @@
+[Unit]
+Description=SNIF CA Proxy cluster sync (doc/cluster.md)
+# Only for a node with peers: snif-syncd exits when SNIF_CLUSTER_PEERS is empty.
+
+[Service]
+User=snif
+Group=snif
+ExecStart=/usr/bin/snif-syncd
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

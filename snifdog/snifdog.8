@@ -105,6 +105,16 @@ No alert.
 .RB ( poll )
 A new alert was raised this pass.
 .TP
+.B 75
+.RB ( pin ", " watch )
+Another snifdog process holds the state directory.
+.B poll
+skips instead, exiting 0.
+.TP
+.B 78
+The state directory belongs to another base domain, or holds pins outside
+this one.
+.TP
 .B non\-zero
 A fetch or configuration error occurred.
 .SH ENVIRONMENT
@@ -115,7 +125,18 @@ Path to the configuration file (default
 .SH FILES
 .TP
 .I /etc/snif/snifdog.conf
-Configuration: namespace, CT source, mode, alert sinks.
+Configuration: namespace, CT source, mode, alert sinks. One configuration
+watches one base domain.
+.TP
+.I /etc/snif/snifdog.d/*.conf
+One configuration per base domain. The cron entry runs a pass for each, and
+for
+.I /etc/snif/snifdog.conf
+if it exists; in watch mode, run one
+.BI snifdog@ base .service
+per file. Each defaults its state directory to
+.IR /var/lib/snif/snifdog/ base ,
+since two bases must never share one.
 .TP
 .I /etc/snif/snif.conf
 SNIF relay configuration, sourced for
@@ -125,7 +146,10 @@ SNIF relay configuration, sourced for
 One SPKI pin record per watched name.
 .TP
 .I /var/lib/snif/snifdog/var/
-Per\-source cursor and the already\-alerted cache.
+Per\-source cursor and the already\-alerted cache; the owning base domain
+.RI ( base )
+and the lock each pass holds
+.RI ( lock ).
 .TP
 .I /var/lib/snif/snifdog/evidence/
 Per\-detection evidence bundles.

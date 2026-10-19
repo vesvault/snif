@@ -1,0 +1,1122 @@
+#!/usr/bin/perl
+
+#/**************************************************************************
+# *     _________
+# *    /````````_\                  S N I F ~ e2e TLS trust for IoT
+# *   /\     , / O\      ___
+# *  | |     | \__|_____/  o\       e2e TLS SNI Forwarder
+# *  | |     |  ``/`````\___/       e2e TLS CA Proxy
+# *  | |     | . | <"""""""~~
+# *  |  \___/ ``  \________/        https://snif.host
+# *   \  '''  ``` /````````         (C) 2021-2026 VESvault Corp
+# *    \_________/                  Jim Zubov <jz@vesvault.com>
+# *
+# *
+# * Apache License, Version 2.0
+# * You may use, copy, modify, merge, publish, distribute and/or sell copies
+# * of the Software under the terms of the Apache License, Version 2.0, a copy
+# * of which is provided in the COPYING file, or http://www.apache.org/licenses/LICENSE-2.0
+# *
+# * This software is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR
+# * CONDITIONS OF ANY KIND, either express or implied.
+# *
+# **************************************************************************/
+
+# snif-syncd: CA proxy state across the nodes of a relay cluster
+# (doc/cluster.md, sections 3 to 7).
+#
+#   snif-syncd                    the daemon
+#   snif-syncd --serve <node>     the forced command of a peer's ssh key: relays
+#                                 the peer's session to the local daemon
+#   snif-syncd enqueue <path>...  queue files for every listed peer
+#   snif-syncd status             the daemon's view of its peers
+#   snif-syncd reconcile          compare state with every listed peer now
+#   snif-syncd seed <peer>        copy a peer's whole state, for a new node
+#
+# Settings come from the environment, else /etc/snif.conf: SNIF_CA_PROXY,
+# SNIF_CLUSTER_NODE (this node's name), SNIF_CLUSTER_PEERS ("name=address ...",
+# the listed peers), SNIF_CLUSTER_LEASE (the certificate lease, seconds), and
+# SNIF_CLUSTER_PEER_CMD (the command that opens a session to a peer; %n is
+# this node's name, %p the peer's name, %a its address).
+#
+# Only core Perl modules are used.
+
+use strict;
+use warnings;
+use IO::Socket::UNIX;
+use IO::Select;
+use IO::Handle;
+use POSIX qw(:errno_h WNOHANG);
+use Fcntl qw(:mode O_NONBLOCK F_GETFL F_SETFL);
+use Digest::SHA qw(sha256_hex);
+use File::Find;
+use File::Path qw(make_path);
+use Time::HiRes qw(time);
+use Time::Local qw(timegm);
+
+our $VERSION = '1';
+
+my %Conf = conf(qw(SNIF_CA_PROXY SNIF_CLUSTER_NODE SNIF_CLUSTER_PEERS SNIF_CLUSTER_LEASE SNIF_CLUSTER_PEER_CMD));
+our $BaseDir = $Conf{SNIF_CA_PROXY};
+our $Node = $Conf{SNIF_CLUSTER_NODE};
+our %Peers = map { /^([^=]+)=(.*)$/ ? ($1 => $2) : () } split(' ', $Conf{SNIF_CLUSTER_PEERS} // '');
+our $PeerCmd = $Conf{SNIF_CLUSTER_PEER_CMD}
+    || 'ssh -o BatchMode=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=3 snif-peer@%a';
+
+our $Sock = "$BaseDir/var/snif-syncd.sock";
+our $QueueDir = "$BaseDir/sync-queue";
+our $LogFile = "$BaseDir/log/log_snif-syncd";
+
+# Defaults (doc/cluster.md section 12)
+our $Deadline = 3;		# a request a client waits on
+our $LongDeadline = 60;		# PUT, LIST
+our $PingEvery = 5;
+our $PingMiss = 3;
+our $CSRLease = 30;
+our $CrtLease = $Conf{SNIF_CLUSTER_LEASE} || 600;
+our $Margin = 5;		# the holder's view of a lease ends this much early
+our $CSRWait = 5;		# how long a CSR waits for a lease held elsewhere
+our $RetryDelay = 1;		# random delay up to this after a partial grant
+our $ScanEvery = 60;
+our $HealthAge = 300;
+our $BackoffMax = 30;
+
+# For tests: SNIF_SYNCD_SET="Deadline=1 PingEvery=1" overrides the defaults above.
+foreach (split ' ', $ENV{SNIF_SYNCD_SET} // '') {
+    my ($k, $v) = split(/=/, $_, 2);
+    no strict 'refs';
+    ${"main::$k"} = $v if $k =~ /^(Deadline|LongDeadline|PingEvery|PingMiss|CSRLease|CrtLease|Margin|CSRWait|RetryDelay|ScanEvery|HealthAge|BackoffMax)$/;
+}
+
+our $NameRe = qr/[A-Za-z0-9][A-Za-z0-9_-]{0,31}/;
+our $CNRe = qr/\w(?:[.-]?\w)*/;
+
+sub conf {
+    my @k = @_;
+    my %c;
+    my @missing = grep { !defined $ENV{$_} } @k;
+    my ($file) = grep { -r } ('/etc/snif/snif.conf', '/etc/snif.conf');
+    if (@missing && $file) {
+	my $sh = ". $file; " . join('', map { "printf '%s\\0' \"\$$_\"; " } @missing);
+	my @v = split(/\0/, `$sh`, -1);
+	@c{@missing} = @v;
+    }
+    $c{$_} = $ENV{$_} foreach grep { defined $ENV{$_} } @k;
+    return %c;
+}
+
+sub dlog {
+    my ($msg) = @_;
+    my @t = localtime;
+    printf STDERR "%02d/%02d/%02d %02d:%02d:%02d [%d]: %s\n", $t[4] + 1, $t[3], $t[5] % 100, $t[2], $t[1], $t[0], $$, $msg;
+}
+
+# ---- paths and classes (section 4) ----------------------------------------
+
+# The class of a path relative to the base directory, or undef if the sync
+# never carries it. For a counter, also the node it belongs to.
+sub classify {
+    my ($p) = @_;
+    return undef if $p =~ m{(^|/)\.\.?(/|$)} || $p =~ m{//} || $p =~ m{^/} || $p =~ /\0/ || $p =~ /\+$/;
+    return ('once') if $p =~ m{^cfg/$CNRe\.cfg$};
+    return ('csr') if $p =~ m{^csr/$CNRe\.csr$};
+    return ('once') if $p =~ m{^auth/$CNRe\.auth$};
+    return ('certificate') if $p =~ m{^crt/$CNRe\.crt$};
+    return ('newest') if $p =~ m{^crt/$CNRe\.err$};
+    return ('newest') if $p =~ m{^apns/_[\w.-]+\.apns$};
+    return ('counter', $1) if $p =~ m{^auth/ves/($NameRe)/[^/.\0][^/\0]*$};
+    return ('counter', $1) if $p =~ m{^auth/captcha/($NameRe)/(?:day-\d{8}|ip-\d{8}-[0-9a-f]{32})$};
+    return undef;
+}
+
+# The directories LIST and reconciliation walk, by LIST argument.
+our %ListDirs = (cfg => 'cfg', csr => 'csr', auth => 'auth', crt => 'crt', apns => 'apns',
+    ves => 'auth/ves', captcha => 'auth/captcha');
+
+sub list_local {
+    my ($class) = @_;
+    my $dir = $ListDirs{$class} // return ();
+    my @out;
+    return () if !-d "$BaseDir/$dir";
+    find({ no_chdir => 1, wanted => sub {
+	return if !-f $_;
+	(my $rel = $_) =~ s{^\Q$BaseDir\E/}{};
+	my ($c) = classify($rel);
+	return if !$c;
+	return if $class eq 'auth' && $rel !~ m{^auth/[^/]+$};
+	my @st = stat($_);
+	my $data = slurp($_);
+	return if !defined $data;
+	push @out, [$rel, length($data), $st[9], sha256_hex($data)];
+    } }, "$BaseDir/$dir");
+    return sort { $a->[0] cmp $b->[0] } @out;
+}
+
+sub slurp {
+    my ($f) = @_;
+    open(my $fh, '<:raw', $f) || return undef;
+    local $/;
+    my $s = <$fh>;
+    close $fh;
+    return $s // '';
+}
+
+# Write $data to $full through a temp file, fsynced, with modification time
+# $mtime, and put it in place with link() (create-if-absent) or rename().
+# Returns 1, 0 if a create-if-absent target exists, undef on error.
+sub put_file {
+    my ($full, $data, $mtime, $exclusive) = @_;
+    (my $dir = $full) =~ s{/[^/]+$}{};
+    make_path($dir, { mode => 02775 }) if !-d $dir;
+    (my $name = $full) =~ s{.*/}{};
+    my $tmp = "$dir/.$name.syncd$$+";
+    open(my $fh, '>:raw', $tmp) || return undef;
+    print $fh $data;
+    $fh->flush;
+    $fh->sync;
+    close($fh) || (unlink($tmp), return undef);
+    utime($mtime, $mtime, $tmp) if defined $mtime;
+    my $ok;
+    if ($exclusive) {
+	$ok = link($tmp, $full) ? 1 : ($! == EEXIST ? 0 : undef);
+	unlink $tmp;
+    } else {
+	$ok = rename($tmp, $full) ? 1 : undef;
+	unlink $tmp if !$ok;
+    }
+    return $ok;
+}
+
+sub not_after {
+    my ($pem) = @_;
+    my $tmp = "$BaseDir/var/.syncd-crt$$+";
+    open(my $fh, '>', $tmp) || return undef;
+    print $fh $pem;
+    close $fh;
+    my $out = `openssl x509 -noout -enddate -in '$tmp' 2>/dev/null`;
+    unlink $tmp;
+    my %mon = (Jan => 0, Feb => 1, Mar => 2, Apr => 3, May => 4, Jun => 5, Jul => 6, Aug => 7, Sep => 8, Oct => 9, Nov => 10, Dec => 11);
+    return undef if $out !~ /notAfter=(\w{3})\s+(\d+)\s+(\d+):(\d+):(\d+)\s+(\d{4})/;
+    return timegm($5, $4, $3, $2, $mon{$1}, $6);
+}
+
+# Install a file received from node $from under its class rule.
+# Returns 'OK', 'KEPT' or 'REJECT <reason>'.
+sub install {
+    my ($rel, $data, $mtime, $from) = @_;
+    my ($class, $owner) = classify($rel);
+    return 'REJECT path' if !$class;
+    return 'REJECT csr' if $class eq 'csr';
+    my $full = "$BaseDir/$rel";
+    if ($class eq 'counter') {
+	return 'REJECT node' if !defined $from || $owner ne $from;
+	return put_file($full, $data, $mtime, 0) ? 'OK' : 'REJECT write';
+    }
+    if ($class eq 'once') {
+	my $r = put_file($full, $data, $mtime, 1);
+	return 'REJECT write' if !defined $r;
+	return 'OK' if $r;
+	my $mine = slurp($full);
+	return 'OK' if defined $mine && $mine eq $data;
+	conflict($rel, $from);
+	return 'KEPT';
+    }
+    if ($class eq 'certificate') {
+	if (-e $full) {
+	    my $new = not_after($data);
+	    my $old = not_after(slurp($full) // '');
+	    return 'REJECT certificate' if !defined $new;
+	    return 'KEPT' if defined $old && $old >= $new;
+	}
+	return 'REJECT write' if !put_file($full, $data, $mtime, 0);
+	(my $err = $full) =~ s/\.crt$/.err/;
+	unlink $err;
+	return 'OK';
+    }
+    if ($class eq 'newest') {
+	my @st = stat $full;
+	return 'KEPT' if @st && $st[9] >= $mtime;
+	return put_file($full, $data, $mtime, 0) ? 'OK' : 'REJECT write';
+    }
+    return 'REJECT class';
+}
+
+our %Conflicts;
+sub conflict {
+    my ($rel, $from) = @_;
+    $Conflicts{$rel} = $from // '?';
+    dlog("conflict: $rel differs from " . ($from // '?') . ", kept ours");
+}
+
+# ---- the event loop -------------------------------------------------------
+
+our $Sel = IO::Select->new;
+our %Conn;		# fileno => connection (local clients, peer sessions relayed in)
+our %Sess;		# peer => outgoing session
+our @Timers;		# [time, sub]
+our $Listener;
+
+sub at {
+    my ($t, $cb) = @_;
+    push @Timers, [$t, $cb];
+}
+
+sub nonblock {
+    my ($fh) = @_;
+    my $fl = fcntl($fh, F_GETFL, 0);
+    fcntl($fh, F_SETFL, $fl | O_NONBLOCK);
+}
+
+sub out {
+    my ($c, $s) = @_;
+    return if $c->{closed};
+    $c->{wbuf} .= $s;
+    flush_out($c);
+}
+
+sub flush_out {
+    my ($c) = @_;
+    my $fh = $c->{wfh} // $c->{fh};
+    while (length $c->{wbuf}) {
+	my $n = syswrite($fh, $c->{wbuf});
+	if (!defined $n) {
+	    return if $! == EAGAIN || $! == EINTR;
+	    return close_any($c, "write: $!");
+	}
+	substr($c->{wbuf}, 0, $n) = '';
+    }
+}
+
+sub close_any {
+    my ($c, $why) = @_;
+    return if $c->{closed};
+    $c->{closed} = 1;
+    if ($c->{sess}) {
+	sess_down($c, $why);
+    } else {
+	conn_closed($c);
+    }
+}
+
+sub loop {
+    $SIG{PIPE} = 'IGNORE';
+    my $lastscan = 0;
+    while (1) {
+	my $now = time;
+	@Timers = sort { $a->[0] <=> $b->[0] } @Timers;
+	while (@Timers && $Timers[0][0] <= $now) {
+	    my $t = shift @Timers;
+	    $t->[1]->();
+	}
+	if ($now - $lastscan >= $ScanEvery) {
+	    $lastscan = $now;
+	    queue_kick_all();
+	    purge_grants();
+	}
+	sess_tick();
+	my $wait = @Timers ? $Timers[0][0] - time : 1;
+	$wait = 1 if $wait > 1;
+	$wait = 0 if $wait < 0;
+	my $wsel = IO::Select->new(map { $_->{wfh} // $_->{fh} } grep { !$_->{closed} && length($_->{wbuf} // '') } (values %Conn, values %Sess));
+	my ($r, $w) = IO::Select->select($Sel, $wsel, undef, $wait);
+	foreach my $fh (@{$w || []}) {
+	    my $c = by_wfh($fh);
+	    flush_out($c) if $c;
+	}
+	foreach my $fh (@{$r || []}) {
+	    if ($Listener && $fh == $Listener) {
+		my $ns = $Listener->accept || next;
+		nonblock($ns);
+		$Conn{fileno $ns} = { fh => $ns, rbuf => '', wbuf => '', slots => [], kind => 'local' };
+		$Sel->add($ns);
+		next;
+	    }
+	    my $c = $Conn{fileno $fh} // sess_by_rfh($fh);
+	    next if !$c;
+	    my $n = sysread($fh, my $buf, 65536);
+	    if (!defined $n) {
+		next if $! == EAGAIN || $! == EINTR;
+		close_any($c, "read: $!");
+		next;
+	    }
+	    if (!$n) {
+		close_any($c, 'closed');
+		next;
+	    }
+	    $c->{rbuf} .= $buf;
+	    if ($c->{sess}) { sess_input($c) } else { conn_input($c) }
+	}
+	reap();
+    }
+}
+
+sub by_wfh {
+    my ($fh) = @_;
+    foreach my $c (values %Conn, values %Sess) {
+	return $c if !$c->{closed} && fileno($c->{wfh} // $c->{fh}) == fileno($fh);
+    }
+    return undef;
+}
+
+sub sess_by_rfh {
+    my ($fh) = @_;
+    foreach my $s (values %Sess) {
+	return $s if !$s->{closed} && $s->{fh} && fileno($s->{fh}) == fileno($fh);
+    }
+    return undef;
+}
+
+sub reap {
+    while ((my $pid = waitpid(-1, WNOHANG)) > 0) {}
+}
+
+# Take one line, or a line and the body its size field announces, off $c->{rbuf}.
+# $sizefn returns the body size a line announces, or undef for none.
+sub take_msg {
+    my ($c, $sizefn) = @_;
+    my $i = index($c->{rbuf}, "\n");
+    return () if $i < 0;
+    my $line = substr($c->{rbuf}, 0, $i);
+    $line =~ s/\r$//;
+    my $size = $sizefn->($line);
+    if (defined $size) {
+	return () if length($c->{rbuf}) < $i + 1 + $size;
+	my $body = substr($c->{rbuf}, $i + 1, $size);
+	substr($c->{rbuf}, 0, $i + 1 + $size) = '';
+	return ($line, $body);
+    }
+    substr($c->{rbuf}, 0, $i + 1) = '';
+    return ($line, undef);
+}
+
+sub req_size {
+    my ($line) = @_;
+    return $1 if $line =~ /^(?:PUT \S+|CSR \S+) (\d+) /;
+    return undef;
+}
+
+# ---- connections to the local socket --------------------------------------
+#
+# Replies go out in the order of the requests, whenever each is ready.
+
+sub conn_input {
+    my ($c) = @_;
+    while (!$c->{closed}) {
+	my ($line, $body) = take_msg($c, \&req_size);
+	last if !defined $line;
+	if ($c->{kind} eq 'peer') {
+	    out($c, serve_peer($c, $line, $body));
+	    next;
+	}
+	if ($line =~ /^PEER ($NameRe)$/ && !@{$c->{slots}}) {
+	    $c->{kind} = 'peer';
+	    $c->{node} = $1;
+	    next;
+	}
+	my $slot = { };
+	push @{$c->{slots}}, $slot;
+	my $reply = sub {
+	    $slot->{done} = 1;
+	    $slot->{text} = shift;
+	    while (@{$c->{slots}} && $c->{slots}[0]{done}) {
+		my $s = shift @{$c->{slots}};
+		out($c, $s->{text}) if defined $s->{text};
+	    }
+	};
+	serve_local($c, $line, $body, $reply);
+    }
+}
+
+sub conn_closed {
+    my ($c) = @_;
+    $Sel->remove($c->{fh});
+    delete $Conn{fileno $c->{fh}};
+    close $c->{fh};
+    # A certificate lease ends with the connection that took it.
+    foreach my $name (keys %main::Held) {
+	lease_release($name) if ($main::Held{$name}{owner} // 0) == $c;
+    }
+}
+
+sub serve_local {
+    my ($c, $line, $body, $reply) = @_;
+    if ($line eq 'SYNC') {
+	queue_kick_all();
+	return $reply->(undef);
+    }
+    if ($line =~ /^CSR ($CNRe) (\d+) ([0-9a-f]{64})$/) {
+	return $reply->("REJECT sha256\n") if sha256_hex($body) ne $3;
+	return csr_accept(lc $1, $body, sub { $reply->("$_[0]\n") });
+    }
+    if ($line =~ /^ENSURE ($CNRe)$/) {
+	return csr_ensure(lc $1, sub { $reply->("$_[0]\n") });
+    }
+    if ($line =~ /^LEASE ($CNRe)$/) {
+	return lease_take("crt:" . lc $1, $CrtLease, { wait => 0, alone_ok => 1, owner => $c }, sub { $reply->("$_[0]\n") });
+    }
+    if ($line =~ /^RELEASE ($CNRe)$/) {
+	lease_release("crt:" . lc $1);
+	return $reply->("OK\n");
+    }
+    if ($line =~ /^FETCH (\S+)$/) {
+	return fetch($1, sub { $reply->("$_[0]\n") });
+    }
+    if ($line eq 'STATUS') {
+	return $reply->(status_text());
+    }
+    if ($line =~ /^RECONCILE(?: ($NameRe))?$/) {
+	return reconcile_all($1, 0, sub { $reply->("$_[0]\n") });
+    }
+    if ($line =~ /^SEED ($NameRe)$/) {
+	return reconcile_all($1, 1, sub { $reply->("$_[0]\n") });
+    }
+    return $reply->("REJECT request\n");
+}
+
+# ---- serving a peer (section 7.3) ------------------------------------------
+
+sub serve_peer {
+    my ($c, $line, $body) = @_;
+    my $from = $c->{node};
+    my $member = exists $Peers{$from};
+    return "HELLO $Node $VERSION\n" if $line =~ /^HELLO \S+ \S+$/;
+    return "PONG\n" if $line eq 'PING';
+    if ($line =~ /^GET (\S+)$/) {
+	my $rel = $1;
+	my ($class) = classify($rel);
+	return "NONE\n" if !$class || !-f "$BaseDir/$rel";
+	my $data = slurp("$BaseDir/$rel") // return "NONE\n";
+	my $mtime = (stat "$BaseDir/$rel")[9];
+	return "DATA " . length($data) . " $mtime " . sha256_hex($data) . "\n" . $data;
+    }
+    if ($line =~ /^LIST (\w+)$/) {
+	return join('', map { "$_->[0] $_->[1] $_->[2] $_->[3]\n" } list_local($1)) . "END\n";
+    }
+    if ($line =~ /^RELEASE (\S+)$/) {
+	my $g = $main::Grant{$1};
+	delete $main::Grant{$1} if $g && $g->{to} eq $from;
+	return "OK\n";
+    }
+    return "REJECT member\n" if !$member;
+    if ($line =~ /^LEASE (\S+) (\d+)$/) {
+	return lease_grant($1, $2, $from) . "\n";
+    }
+    if ($line =~ /^PUT (\S+) (\d+) (\d+) ([0-9a-f]{64})$/) {
+	my ($rel, $mtime, $sha) = ($1, $3, $4);
+	return "REJECT sha256\n" if sha256_hex($body) ne $sha;
+	return install($rel, $body, $mtime, $from) . "\n";
+    }
+    if ($line =~ /^CSR ($CNRe) (\d+) ([0-9a-f]{64})$/) {
+	my ($cn, $sha) = (lc $1, $3);
+	return "REJECT sha256\n" if sha256_hex($body) ne $sha;
+	my $g = $main::Grant{"csr:$cn"};
+	return "REJECT lease\n" if !$g || $g->{to} ne $from || $g->{expire} <= time;
+	return csr_store($cn, $body) . "\n";
+    }
+    return "REJECT request\n";
+}
+
+# Create csr/<cn>.csr if absent. 'STORED', 'SAME', 'DIFFERENT' or 'REJECT write'.
+sub csr_store {
+    my ($cn, $data) = @_;
+    my $full = "$BaseDir/csr/$cn.csr";
+    my $r = put_file($full, $data, undef, 1);
+    return 'REJECT write' if !defined $r;
+    return 'STORED' if $r;
+    my $mine = slurp($full);
+    return (defined $mine && $mine eq $data) ? 'SAME' : 'DIFFERENT';
+}
+
+# ---- outgoing sessions (section 3) -----------------------------------------
+
+sub sess_start {
+    my ($peer) = @_;
+    my $s = $Sess{$peer} //= { peer => $peer, backoff => 1, state => 'down', next_try => 0 };
+    return if $s->{state} ne 'down' || time < $s->{next_try};
+    (my $cmd = $PeerCmd) =~ s/%(.)/$1 eq 'n' ? $Node : $1 eq 'p' ? $peer : $1 eq 'a' ? $Peers{$peer} : $1 eq '%' ? '%' : "%$1"/ge;
+    pipe(my $cr, my $pw) || return;
+    pipe(my $pr, my $cw) || return;
+    my $pid = fork;
+    return if !defined $pid;
+    if (!$pid) {
+	close $pr; close $pw;
+	open(STDIN, '<&', $cr);
+	open(STDOUT, '>&', $cw);
+	{ exec('/bin/sh', '-c', $cmd) };
+	POSIX::_exit(127);
+    }
+    close $cr; close $cw;
+    nonblock($pr); nonblock($pw);
+    %$s = (%$s, pid => $pid, fh => $pr, wfh => $pw, rbuf => '', wbuf => '', closed => 0, sess => 1,
+	state => 'hello', inflight => [], urgent => [], bulk => [], pings => 0, last_ping => time);
+    $Sel->add($pr);
+    sess_send($s, "HELLO $Node $VERSION\n", undef, $Deadline, sub {
+	my ($rs) = @_;
+	if (($rs // '') =~ /^HELLO (\S+) \S+$/ && $1 eq $peer) {
+	    $s->{state} = 'up';
+	    $s->{backoff} = 1;
+	    dlog("peer $peer: up");
+	    queue_requeue($peer);
+	    queue_kick($peer);
+	} else {
+	    dlog("peer $peer: bad HELLO reply: " . ($rs // 'none'));
+	    close_any($s, 'bad hello');
+	}
+    }, 'line', 1);
+}
+
+sub sess_down {
+    my ($s, $why) = @_;
+    my $was = $s->{state};
+    $s->{state} = 'down';
+    $Sel->remove($s->{fh}) if $s->{fh};
+    close $s->{fh} if $s->{fh};
+    close $s->{wfh} if $s->{wfh};
+    kill 'TERM', $s->{pid} if $s->{pid};
+    delete @$s{qw(fh wfh pid)};
+    $s->{next_try} = time + $s->{backoff};
+    $s->{backoff} = $s->{backoff} * 2 > $BackoffMax ? $BackoffMax : $s->{backoff} * 2;
+    dlog("peer $s->{peer}: down ($why)") if $was ne 'down';
+    my @fail = (@{$s->{inflight} || []}, @{$s->{urgent} || []}, @{$s->{bulk} || []});
+    $s->{inflight} = []; $s->{urgent} = []; $s->{bulk} = [];
+    foreach my $r (@fail) { $r->{cb}->(undef) if $r->{cb} }
+    queue_requeue($s->{peer});
+}
+
+sub sess_up { my ($peer) = @_; return $Sess{$peer} && $Sess{$peer}{state} eq 'up' }
+
+# Queue a request. $kind is 'line', 'data' (GET) or 'list' (LIST); urgent ones
+# go ahead of bulk ones not yet sent, and at most one bulk request is in flight.
+sub sess_send {
+    my ($s, $line, $body, $deadline, $cb, $kind, $urgent) = @_;
+    if (!$s || ($s->{state} ne 'up' && $line !~ /^HELLO /)) {
+	$cb->(undef) if $cb;
+	return;
+    }
+    my $r = { text => $line . ($body // ''), deadline => $deadline, cb => $cb, kind => $kind || 'line', bulk => !$urgent };
+    push @{$urgent ? $s->{urgent} : $s->{bulk}}, $r;
+    sess_pump($s);
+}
+
+sub sess_pump {
+    my ($s) = @_;
+    return if $s->{closed};
+    while (@{$s->{urgent}}) {
+	my $r = shift @{$s->{urgent}};
+	$r->{expire} = time + $r->{deadline};
+	push @{$s->{inflight}}, $r;
+	out($s, $r->{text});
+    }
+    if (@{$s->{bulk}} && !grep { $_->{bulk} } @{$s->{inflight}}) {
+	my $r = shift @{$s->{bulk}};
+	$r->{expire} = time + $r->{deadline};
+	push @{$s->{inflight}}, $r;
+	out($s, $r->{text});
+    }
+}
+
+sub sess_input {
+    my ($s) = @_;
+    while (!$s->{closed} && @{$s->{inflight}}) {
+	my $r = $s->{inflight}[0];
+	if ($r->{kind} eq 'list') {
+	    my $i = index($s->{rbuf}, "END\n");
+	    last if $i < 0 || ($i > 0 && substr($s->{rbuf}, $i - 1, 1) ne "\n");
+	    my $text = substr($s->{rbuf}, 0, $i);
+	    substr($s->{rbuf}, 0, $i + 4) = '';
+	    shift @{$s->{inflight}};
+	    $r->{cb}->([map { [split ' '] } split(/\n/, $text)]) if $r->{cb};
+	} else {
+	    my ($line, $body) = take_msg($s, sub { $r->{kind} eq 'data' && $_[0] =~ /^DATA (\d+) / ? $1 : undef });
+	    last if !defined $line;
+	    shift @{$s->{inflight}};
+	    if ($line eq 'PONG') { $s->{pings} = 0 }
+	    $r->{cb}->($line, $body) if $r->{cb};
+	}
+	sess_pump($s);
+    }
+}
+
+sub sess_tick {
+    my $now = time;
+    foreach my $peer (keys %Peers) {
+	my $s = $Sess{$peer};
+	if (!$s || $s->{state} eq 'down') { sess_start($peer); next }
+	foreach my $r (@{$s->{inflight}}) {
+	    if ($r->{expire} < $now) { close_any($s, 'deadline'); last }
+	}
+	next if $s->{closed} || $s->{state} ne 'up';
+	if ($now - $s->{last_ping} >= $PingEvery) {
+	    $s->{last_ping} = $now;
+	    if (++$s->{pings} > $PingMiss) { close_any($s, 'heartbeat'); next }
+	    sess_send($s, "PING\n", undef, $PingEvery * $PingMiss, sub { }, 'line', 1);
+	}
+    }
+}
+
+# Send one request to each of @peers at once; $done gets {peer => [line, body]},
+# with undef for a peer that could not be asked or did not answer.
+sub ask_all {
+    my ($peers, $mk, $done, $kind) = @_;
+    my %rs;
+    my $left = scalar @$peers;
+    return $done->(\%rs) if !$left;
+    foreach my $p (@$peers) {
+	my ($line, $body) = $mk->($p);
+	sess_send($Sess{$p}, $line, $body, $Deadline, sub {
+	    $rs{$p} = defined $_[0] ? [@_] : undef;
+	    $done->(\%rs) if !--$left;
+	}, $kind, 1);
+    }
+}
+
+# ---- leases (section 6) ---------------------------------------------------
+
+our %Held;	# name => {expire, owner, granted => [peers]}
+our %Grant;	# name => {to, expire}: granted to a peer, on our clock
+our %Req;	# name => in-progress request of ours
+
+sub purge_grants {
+    my $now = time;
+    foreach my $n (keys %Grant) { delete $Grant{$n} if $Grant{$n}{expire} <= $now }
+    foreach my $n (keys %Held) { delete $Held{$n} if $Held{$n}{expire} <= $now }
+}
+
+sub lease_valid {
+    my ($name) = @_;
+    return $Held{$name} && $Held{$name}{expire} > time;
+}
+
+# A peer asks for a lease: 'GRANTED' or 'HELD'.
+sub lease_grant {
+    my ($name, $secs, $from) = @_;
+    my $now = time;
+    return 'HELD' if lease_valid($name);
+    my $g = $Grant{$name};
+    if ($g && $g->{expire} > $now && $g->{to} ne $from) {
+	return 'HELD';
+    }
+    if (my $q = $Req{$name}) {
+	return 'HELD' if $Node lt $from;	# the lower node name wins a tie
+	$q->{abort} = 1;			# give up our own request
+    }
+    $Grant{$name} = { to => $from, expire => $now + $secs };
+    return 'GRANTED';
+}
+
+# Take a lease from every listed peer. $cb gets 'GRANTED', 'ALONE' (some peers
+# unreachable, allowed by alone_ok), 'HELD' / 'BUSY' (held elsewhere, after
+# waiting up to $o->{wait}), or 'UNREACHABLE'.
+sub lease_take {
+    my ($name, $secs, $o, $cb, $until) = @_;
+    $until //= time + $o->{wait};
+    my $busy = $o->{wait} ? 'BUSY' : 'HELD';
+    my $now = time;
+    if (lease_valid($name) || $Req{$name} || ($Grant{$name} && $Grant{$name}{expire} > $now)) {
+	return $cb->($busy) if $now >= $until;
+	return at($now + 0.1 + rand(0.2), sub { lease_take($name, $secs, $o, $cb, $until) });
+    }
+    my @peers = sort keys %Peers;
+    my @up = grep { sess_up($_) } @peers;
+    return $cb->('UNREACHABLE') if @up < @peers && !$o->{alone_ok};
+    my $q = $Req{$name} = { sent => $now };
+    ask_all(\@up, sub { ("LEASE $name $secs\n") }, sub {
+	my ($rs) = @_;
+	delete $Req{$name};
+	my @granted = grep { $rs->{$_} && $rs->{$_}[0] eq 'GRANTED' } @up;
+	my $held = grep { $rs->{$_} && $rs->{$_}[0] eq 'HELD' } @up;
+	my $unreach = (@peers - @up) + grep { !$rs->{$_} || $rs->{$_}[0] !~ /^(GRANTED|HELD)$/ } @up;
+	if ($held || $q->{abort} || ($unreach && !$o->{alone_ok})) {
+	    lease_giveback($name, \@granted);
+	    return $cb->('UNREACHABLE') if !$held && !$q->{abort};
+	    return $cb->($busy) if time >= $until;
+	    return at(time + rand($RetryDelay), sub { lease_take($name, $secs, $o, $cb, $until) });
+	}
+	$Held{$name} = { expire => $q->{sent} + $secs - $Margin, owner => $o->{owner}, granted => \@granted };
+	$cb->($unreach ? 'ALONE' : 'GRANTED');
+    });
+}
+
+sub lease_giveback {
+    my ($name, $peers) = @_;
+    foreach my $p (@$peers) { sess_send($Sess{$p}, "RELEASE $name\n", undef, $Deadline, sub { }, 'line', 1) }
+}
+
+sub lease_release {
+    my ($name) = @_;
+    my $h = delete $Held{$name} || return;
+    lease_giveback($name, $h->{granted});
+}
+
+# ---- CSRs (section 5) -----------------------------------------------------
+
+sub csr_accept {
+    my ($cn, $data, $cb) = @_;
+    lease_take("csr:$cn", $CSRLease, { wait => $CSRWait }, sub {
+	my ($l) = @_;
+	return $cb->($l) if $l ne 'GRANTED';
+	my $done = sub { lease_release("csr:$cn"); $cb->($_[0]) };
+	my $mine = slurp("$BaseDir/csr/$cn.csr");
+	return $done->($mine eq $data ? 'SAME' : 'DIFFERENT') if defined $mine;
+	csr_to_peers($cn, $data, sub {
+	    my ($r) = @_;
+	    return $done->($r) if $r ne 'OK';
+	    return $done->('UNREACHABLE') if !lease_valid("csr:$cn");
+	    my $s = csr_store($cn, $data);
+	    $done->($s eq 'REJECT write' ? 'UNREACHABLE' : $s);
+	});
+    });
+}
+
+# Before a first certificate: every listed peer holds our CSR.
+sub csr_ensure {
+    my ($cn, $cb) = @_;
+    my $data = slurp("$BaseDir/csr/$cn.csr");
+    return $cb->('UNREACHABLE') if !defined $data;
+    lease_take("csr:$cn", $CSRLease, { wait => $CSRWait }, sub {
+	my ($l) = @_;
+	return $cb->($l eq 'BUSY' ? 'UNREACHABLE' : $l) if $l ne 'GRANTED';
+	csr_to_peers($cn, $data, sub {
+	    lease_release("csr:$cn");
+	    $cb->($_[0] eq 'OK' ? 'STORED' : $_[0]);
+	});
+    });
+}
+
+# Send our CSR to every listed peer: 'OK' (all STORED or SAME), 'DIFFERENT',
+# or 'UNREACHABLE'.
+sub csr_to_peers {
+    my ($cn, $data, $cb, $peers) = @_;
+    my @peers = $peers ? @$peers : sort keys %Peers;
+    return $cb->('UNREACHABLE') if grep { !sess_up($_) } @peers;
+    my $sha = sha256_hex($data);
+    ask_all(\@peers, sub { ("CSR $cn " . length($data) . " $sha\n", $data) }, sub {
+	my ($rs) = @_;
+	my @a = map { $rs->{$_} ? $rs->{$_}[0] : '' } @peers;
+	return $cb->('DIFFERENT') if grep { $_ eq 'DIFFERENT' } @a;
+	return $cb->('OK') if !grep { $_ ne 'STORED' && $_ ne 'SAME' } @a;
+	$cb->('UNREACHABLE');
+    });
+}
+
+# ---- FETCH (section 7.2) ---------------------------------------------------
+
+sub fetch {
+    my ($rel, $cb) = @_;
+    my ($class) = classify($rel);
+    return $cb->('REJECT path') if !$class || $class eq 'csr' || $class eq 'counter';
+    my @peers = sort keys %Peers;
+    my @up = grep { sess_up($_) } @peers;
+    ask_all(\@up, sub { ("GET $rel\n") }, sub {
+	my ($rs) = @_;
+	my $found = 0;
+	my $none = @peers - @up;
+	foreach my $p (@up) {
+	    my $r = $rs->{$p};
+	    if (!$r) { $none++; next }
+	    if ($r->[0] =~ /^DATA \d+ (\d+) ([0-9a-f]{64})$/ && sha256_hex($r->[1] // '') eq $2) {
+		my $res = install($rel, $r->[1], $1, $p);
+		$found = 1 if $res eq 'OK' || $res eq 'KEPT';
+	    }
+	}
+	$cb->($found ? 'FOUND' : $none ? 'UNREACHABLE' : 'NONE');
+    }, 'data');
+}
+
+# ---- the queue (section 7.1) ----------------------------------------------
+
+sub queue_entries {
+    my ($peer) = @_;
+    my $dir = "$QueueDir/$peer";
+    return () if !-d $dir;
+    my @e;
+    find({ no_chdir => 1, wanted => sub {
+	if (-d $_ && m{/\.inflight$}) { $File::Find::prune = 1; return }
+	return if !-l $_;
+	(my $rel = $_) =~ s{^\Q$dir\E/}{};
+	push @e, [$rel, (lstat $_)[9]];
+    } }, $dir);
+    return sort { $a->[1] <=> $b->[1] } @e;
+}
+
+sub queue_kick_all { queue_kick($_) foreach keys %Peers }
+
+sub queue_kick {
+    my ($peer) = @_;
+    my $s = $Sess{$peer};
+    return if !sess_up($peer) || $s->{putting};
+    foreach my $e (queue_entries($peer)) {
+	my ($rel) = @$e;
+	my $entry = "$QueueDir/$peer/$rel";
+	my $inflight = "$QueueDir/$peer/.inflight/$rel";
+	my ($class) = classify($rel);
+	if (!$class || $class eq 'csr') {
+	    dlog("queue $peer: refusing $rel");
+	    unlink $entry;
+	    next;
+	}
+	(my $idir = $inflight) =~ s{/[^/]+$}{};
+	make_path($idir) if !-d $idir;
+	next if !rename($entry, $inflight);
+	my $data = slurp("$BaseDir/$rel");
+	if (!defined $data) {
+	    dlog("queue $peer: $rel is gone, dropped");
+	    unlink $inflight;
+	    next;
+	}
+	my $mtime = (stat "$BaseDir/$rel")[9];
+	$s->{putting} = 1;
+	sess_send($s, "PUT $rel " . length($data) . " $mtime " . sha256_hex($data) . "\n", $data, $LongDeadline, sub {
+	    my ($rs) = @_;
+	    $s->{putting} = 0;
+	    if (!defined $rs) {
+		queue_requeue_one($peer, $rel);
+		return;
+	    }
+	    dlog("queue $peer: $rel: $rs") if $rs !~ /^(OK|KEPT)$/;
+	    unlink $inflight;
+	    queue_kick($peer);
+	});
+	return;
+    }
+}
+
+sub queue_requeue_one {
+    my ($peer, $rel) = @_;
+    my $inflight = "$QueueDir/$peer/.inflight/$rel";
+    my $entry = "$QueueDir/$peer/$rel";
+    if (-l $entry) { unlink $inflight } else { rename($inflight, $entry) }
+}
+
+# After a restart or a reconnect, claimed entries go back into the queue.
+sub queue_requeue {
+    my ($peer) = @_;
+    my $dir = "$QueueDir/$peer/.inflight";
+    return if !-d $dir;
+    find({ no_chdir => 1, wanted => sub {
+	return if !-l $_;
+	(my $rel = $_) =~ s{^\Q$dir\E/}{};
+	queue_requeue_one($peer, $rel);
+    } }, $dir);
+}
+
+sub queue_oldest {
+    my ($peer) = @_;
+    my @e = queue_entries($peer);
+    return (scalar(@e), @e ? int(time - $e[0][1]) : 0);
+}
+
+# Queue files (paths relative to the base directory) for every listed peer.
+sub enqueue {
+    my (@rel) = @_;
+    foreach my $rel (@rel) {
+	my ($class) = classify($rel);
+	next if !$class || $class eq 'csr';
+	foreach my $peer (keys %Peers) {
+	    my $entry = "$QueueDir/$peer/$rel";
+	    (my $dir = $entry) =~ s{/[^/]+$}{};
+	    make_path($dir, { mode => 02775 }) if !-d $dir;
+	    symlink("$BaseDir/$rel", $entry) || $! == EEXIST || dlog("enqueue $rel for $peer: $!");
+	}
+    }
+}
+
+# ---- reconciliation and seeding (section 7.4) --------------------------------
+
+# With every listed peer in turn (or only $only): pull what we lack or hold
+# older, push what the peer lacks or holds older. $seed copies the peer's csr/
+# without a lease, for a node that is not listed anywhere yet.
+sub reconcile_all {
+    my ($only, $seed, $cb) = @_;
+    my @peers = $only ? ($only) : sort keys %Peers;
+    return $cb->('REJECT peer') if grep { !exists $Peers{$_} } @peers;
+    my %tot = (pulled => 0, pushed => 0, conflicts => 0, failed => 0);
+    my $next;
+    $next = sub {
+	my $p = shift @peers;
+	return $cb->("OK pulled=$tot{pulled} pushed=$tot{pushed} conflicts=$tot{conflicts} failed=$tot{failed}") if !defined $p;
+	if (!sess_up($p)) { $tot{failed}++; return $next->() }
+	reconcile_peer($p, $seed, \%tot, $next);
+    };
+    $next->();
+}
+
+sub reconcile_peer {
+    my ($p, $seed, $tot, $done) = @_;
+    my @classes = sort keys %ListDirs;
+    my $s = $Sess{$p};
+    my $step;
+    $step = sub {
+	my $class = shift @classes;
+	return $done->() if !defined $class;
+	sess_send($s, "LIST $class\n", undef, $LongDeadline, sub {
+	    my ($list) = @_;
+	    if (ref $list ne 'ARRAY') { $tot->{failed}++; return $done->() }
+	    my %remote = map { $_->[0] => $_ } grep { @$_ == 4 } @$list;
+	    my %local = map { $_->[0] => $_ } list_local($class);
+	    my @pull = grep { !$local{$_} || $local{$_}[3] ne $remote{$_}[3] } sort keys %remote;
+	    my @push = $seed ? () : grep { !$remote{$_} || $remote{$_}[3] ne $local{$_}[3] } sort keys %local;
+	    reconcile_files($p, $class, \@pull, \@push, \%local, \%remote, $seed, $tot, $step);
+	}, 'list', 0);
+    };
+    $step->();
+}
+
+sub reconcile_files {
+    my ($p, $class, $pull, $push, $local, $remote, $seed, $tot, $done) = @_;
+    if ($class ne 'csr') {
+	enqueue_for($p, @$push);
+	$tot->{pushed} += @$push;
+    }
+    my @work = ((map { ['pull', $_] } @$pull), ($class eq 'csr' ? map { ['push', $_] } @$push : ()));
+    my $one;
+    $one = sub {
+	my $w = shift @work;
+	if (!$w) { queue_kick($p); return $done->() }
+	my ($what, $rel) = @$w;
+	(my $cn = $rel) =~ s{^csr/(.*)\.csr$}{$1};
+	if ($class eq 'csr' && $local->{$rel} && $remote->{$rel}) {	# differ: a conflict
+	    conflict($rel, $p);
+	    $tot->{conflicts}++;
+	    return $one->();
+	}
+	if ($what eq 'push') {			# a CSR the peer lacks
+	    my $data = slurp("$BaseDir/$rel") // return $one->();
+	    return lease_take("csr:$cn", $CSRLease, { wait => $CSRWait }, sub {
+		return ($tot->{failed}++, $one->()) if $_[0] ne 'GRANTED';
+		csr_to_peers($cn, $data, sub {
+		    lease_release("csr:$cn");
+		    $_[0] eq 'OK' ? $tot->{pushed}++ : $_[0] eq 'DIFFERENT' ? ($tot->{conflicts}++, conflict($rel, $p)) : $tot->{failed}++;
+		    $one->();
+		}, [$p]);
+	    });
+	}
+	sess_send($Sess{$p}, "GET $rel\n", undef, $LongDeadline, sub {
+	    my ($line, $body) = @_;
+	    if (!defined $line || $line !~ /^DATA \d+ (\d+) ([0-9a-f]{64})$/ || sha256_hex($body // '') ne $2) {
+		$tot->{failed}++ if !defined $line || $line ne 'NONE';
+		return $one->();
+	    }
+	    my $mtime = $1;
+	    if ($class ne 'csr') {
+		my $r = install($rel, $body, $mtime, $p);
+		$r eq 'OK' ? $tot->{pulled}++ : $r eq 'KEPT' ? () : $tot->{failed}++;
+		return $one->();
+	    }
+	    my $store = sub {
+		my $r = csr_store($cn, $body);
+		$r eq 'STORED' ? $tot->{pulled}++ : $r eq 'DIFFERENT' ? ($tot->{conflicts}++, conflict($rel, $p)) : ();
+		$one->();
+	    };
+	    return $store->() if $seed;
+	    lease_take("csr:$cn", $CSRLease, { wait => $CSRWait }, sub {
+		return ($tot->{failed}++, $one->()) if $_[0] ne 'GRANTED';
+		lease_valid("csr:$cn") ? $store->() : ($tot->{failed}++, $one->());
+		lease_release("csr:$cn");
+	    });
+	}, 'data', 0);
+    };
+    $one->();
+}
+
+sub enqueue_for {
+    my ($peer, @rel) = @_;
+    local %Peers = ($peer => $Peers{$peer});
+    enqueue(@rel);
+}
+
+# ---- status ---------------------------------------------------------------
+
+sub status_text {
+    my @l = ("node $Node");
+    foreach my $p (sort keys %Peers) {
+	my ($n, $age) = queue_oldest($p);
+	my $st = $Sess{$p} ? $Sess{$p}{state} : 'down';
+	push @l, "peer $p $st queue=$n oldest=${age}s" . ($age > $HealthAge ? " STALE" : "");
+    }
+    push @l, "conflict $_ from $Conflicts{$_}" foreach sort keys %Conflicts;
+    push @l, "held " . scalar(grep { lease_valid($_) } keys %Held) . " granted " . scalar(grep { $Grant{$_}{expire} > time } keys %Grant);
+    return join('', map { "$_\n" } @l) . "END\n";
+}
+
+# ---- command line -----------------------------------------------------------
+
+sub client {
+    my $c = IO::Socket::UNIX->new(Peer => $Sock, Type => SOCK_STREAM) || die "snif-syncd: $Sock: $!\n";
+    return $c;
+}
+
+sub ask_daemon {
+    my ($req, $multi) = @_;
+    my $c = client();
+    print $c "$req\n";
+    $c->flush;
+    my $out = '';
+    while (my $l = <$c>) {
+	$out .= $l;
+	last if !$multi || $l eq "END\n";
+    }
+    return $out;
+}
+
+sub serve_relay {
+    my ($node) = @_;
+    die "snif-syncd: bad node name\n" if $node !~ /^$NameRe$/;
+    my $c = client();
+    syswrite($c, "PEER $node\n");
+    my $sel = IO::Select->new(\*STDIN, $c);
+    binmode STDIN; binmode STDOUT;
+    while (1) {
+	foreach my $fh ($sel->can_read) {
+	    my $n = sysread($fh, my $buf, 65536);
+	    exit 0 if !$n;
+	    my $to = $fh == $c ? \*STDOUT : $c;
+	    while (length $buf) {
+		my $w = syswrite($to, $buf);
+		exit 0 if !defined $w;
+		substr($buf, 0, $w) = '';
+	    }
+	}
+    }
+}
+
+return 1 if caller;
+
+my $cmd = shift(@ARGV) // '';
+if ($cmd eq '--serve') { serve_relay(shift(@ARGV) // ''); exit 0 }
+if ($cmd eq 'enqueue') {
+    enqueue(@ARGV);
+    eval { my $c = client(); print $c "SYNC\n"; close $c };
+    exit 0;
+}
+if ($cmd eq 'status') { print ask_daemon('STATUS', 1); exit 0 }
+if ($cmd eq 'reconcile') { print ask_daemon('RECONCILE'); exit 0 }
+if ($cmd eq 'seed') { print ask_daemon('SEED ' . (shift(@ARGV) // '')); exit 0 }
+die "usage: snif-syncd [--serve <node> | enqueue <path>... | status | reconcile | seed <peer>]\n" if $cmd ne '';
+
+die "snif-syncd: SNIF_CLUSTER_NODE is not set\n" if !defined $Node || $Node !~ /^$NameRe$/;
+die "snif-syncd: no peers in SNIF_CLUSTER_PEERS\n" if !%Peers;
+foreach my $p (keys %Peers) { die "snif-syncd: bad peer name $p\n" if $p !~ /^$NameRe$/ || $p eq $Node }
+
+open(STDERR, '>>', $LogFile) if !$ENV{SNIF_SYNCD_STDERR};
+STDERR->autoflush(1);
+dlog("starting snif-syncd, node $Node, peers " . join(' ', sort keys %Peers));
+umask(0002);
+unlink $Sock;
+my $um = umask(0007);
+$Listener = IO::Socket::UNIX->new(Local => $Sock, Type => SOCK_STREAM, Listen => 32) || die "snif-syncd: $Sock: $!\n";
+umask($um);
+chmod(0660, $Sock);
+nonblock($Listener);
+$Sel->add($Listener);
+# Writers queue a file with a link in every sync-queue/<peer>/ (snif-cluster.php,
+# snif-certd, snif-apnsd), so these directories are exactly the listed peers.
+make_path("$QueueDir/$_", { mode => 02775 }) foreach keys %Peers;
+foreach my $d (glob("$QueueDir/*")) {
+    (my $p = $d) =~ s{.*/}{};
+    next if exists $Peers{$p} || !-d $d;
+    dlog("dropping the queue of $p, which is no longer listed");
+    File::Path::remove_tree($d);
+}
+queue_requeue($_) foreach keys %Peers;
+loop();

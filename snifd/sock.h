@@ -25,6 +25,11 @@
 #define	SNIF_SOCK_MAXBUF	131072
 #endif
 
+/* Connect timeout per address, ms */
+#ifndef SNIF_SOCK_CONNTMOUT
+#define	SNIF_SOCK_CONNTMOUT	5000
+#endif
+
 struct pollfd;
 
 typedef struct snif_sock {
@@ -98,6 +103,7 @@ struct snif_sock *snif_sock_initconn(struct snif_sock *sock);
 void snif_sock_setpoll(struct snif_sock *sock, struct pollfd *pollfd, int ev);
 void snif_sock_initpoll(struct snif_sock *sock, struct pollfd *pollfd);
 int snif_sock_accept(struct snif_sock *sock, int abuse);
+int snif_sock_connwait(int fd);
 int snif_sock_connect(const char *host, const char *port);
 int snif_sock_setnb(int fd);
 struct snif_sock *snif_sock_addchain(struct snif_sock *sock, struct snif_sock **chain);

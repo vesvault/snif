@@ -33,16 +33,49 @@ secure_html/ is the HTTPS root for the dedicated initialization domain,
     to acquire a hostname and a certificate, snifd -a argument.
 
 Crypt::LE is required by bin/snif-certd for Let's Encrypt ACME,
-    use cpan install
+    use cpan install. It is not needed if every domain issues from a local CA
+    (see etc/{SNIF_domain}.pub-ca below).
 
-Net::DNS is required if using wildcard certs, use cpan install
+Net::DNS is required if using wildcard certs from Let's Encrypt, use cpan
+    install
+
+The openssl command line tool is required by bin/snif-certd for domains that
+    issue from a local CA.
 
 etc/{SNIF_initialization_domain}.domains contains the list of {domain} names
     to issue SNIF hosts as subdomains that are expected to point to CNAME
     snif-pool.{domain}, and to be served by HTTP public.html/
 
 etc/{SNIF_domain}.tsig must contain a DDNS TSIG that permits managing IN TXT
-    RRs for snif-pool.{SNIF_domain} for CA domain verification.
+    RRs at the name _acme-challenge.{host} is an alias for, for CA domain
+    verification: snif-pool.{SNIF_domain}, through the *.{SNIF_domain}
+    wildcard, unless DNS says otherwise (several domains can share one pool
+    name, see doc/cluster.md). If the alias cannot be followed, snif-certd uses
+    snif-pool.{SNIF_domain} in the zone {SNIF_domain}. It adds one TXT value
+    per name being validated and sends each update to every nameserver of the
+    zone holding that name, with a $DNSUpdateTimeout second timeout. It goes on
+    if at least one accepted, waits until every server that answered serves
+    the values (up to $DNSWait seconds; a server that refused may be a
+    secondary), and afterwards deletes exactly the values it added, so
+    concurrent attempts and a certificate for both a name and its wildcard do
+    not remove each other's records. A deletion that fails is retried after
+    later attempts (var/snif-certd.pending). test/certd-dns.t checks this
+    against stub modules.
+
+etc/{SNIF_domain}.pub-ca and etc/{SNIF_domain}.priv-ca (optional) make
+    {SNIF_domain} issue from a local CA instead of Let's Encrypt, for closed
+    systems whose connectors and relay trust a private CA root rather than the
+    public ones. .priv-ca holds the CA private key and .pub-ca the CA
+    certificate, both PEM; .pub-ca is a self-signed root, or an intermediate
+    followed by the rest of its chain. snif-certd signs each connector's CSR
+    itself - no ACME account, no DNS or HTTP challenge - and appends .pub-ca as
+    the chain. Certificates are wildcards for the device zone, as with a .tsig
+    domain, and are valid for 90 days. A local CA takes precedence over .tsig,
+    and has no server-wide fallback: it only issues for the base domain it is
+    named for. Keep .priv-ca readable by the snif user only, and consider a
+    nameConstraints extension on the CA certificate that permits only
+    {SNIF_domain}. The CA root must be trusted by the connectors and by the
+    relay for these certificates to verify.
 
 The following per-domain settings are keyed on {SNIF_domain} (the base domain,
     as in the .domains/.tsig files above). Each falls back to a server-wide file
@@ -82,6 +115,17 @@ etc/turnstile.secret and etc/turnstile.sitekey enable the optional Cloudflare
     1x0000000000000000000000000000000AA) for local testing. To use your own
     Turnstile account, replace both files with a matching site/secret pair.
 
+etc/{email}.ves-limit and etc/ves-limit (optional) limit the certificates a
+    VES account approves (inc/snif-auth-ves.php). The approvals form a leaky
+    bucket: each adds one, one leaks out per refill time, and an approval is
+    refused (429) while more than the limit are in it. The file holds the
+    limit and the refill time, e.g. "10 1d" (s, m, h or d; a bare number is
+    seconds; 0 never refills). {email} is the account's email as VES returns
+    it; without that file etc/ves-limit applies, then 10 and 1d. The
+    approval times are in auth/ves/{email}, one line each, or in a relay
+    cluster auth/ves/{node}/{email}; like the rest of etc/, the limit files
+    are written on every node.
+
 snif-certd daemon needs to be launched on the server start to process
     the certificate issuance for SNIF connectors.
 
@@ -89,13 +133,25 @@ snif-arc needs to be launched periodically, recommended once a day via
     crontab, to archive aging certificates: it moves any certificate older than
     75 days out of crt/ into a dated folder under arc/. It does not reissue
     anything - removing the stale certificate is what lets snif-certd issue a
-    fresh one the next time the connector requests it.
+    fresh one the next time the connector requests it. A local-CA domain's
+    root bundle, crt/{SNIF_domain}.crt next to etc/{SNIF_domain}.pub-ca, is
+    not an issued certificate and stays in crt/.
 
 snif-apnsd is an optional process that sends APNS notifications to wake up
     a sleeping iOS device to serve an incoming connection, as long as the
     device has registered with APNS and has communicated the hex APNS ID to
     SNIF relay over the control connection by sending
     "SNIF MSG hostname.snif-1234-5678.example.com apns=0123ABCD..."
+
+snif-syncd keeps the CA proxy state of a relay cluster in step across its
+    nodes (doc/cluster.md). It runs only on a node with peers: set
+    SNIF_CLUSTER_NODE (this node's name) and SNIF_CLUSTER_PEERS
+    ("name=address ...") in /etc/snif.conf. It opens an ssh session to each
+    peer (SNIF_CLUSTER_PEER_CMD overrides the command), whose key's forced
+    command on the peer is "snif-syncd --serve <this node>". Writers queue
+    files with "snif-syncd enqueue <path>"; "snif-syncd status", "reconcile"
+    and "seed <peer>" talk to the running daemon. test/syncd.t runs three
+    nodes on one host.
 
 
 CONTENTS:

@@ -22,29 +22,14 @@
 # *
 # **************************************************************************/
 
-use Crypt::LE;
+# Crypt::LE (Let's Encrypt ACME) and Net::DNS (DNS-01 for wildcard certs) are
+# loaded on first use rather than at startup, so a CA proxy whose domains all
+# issue from a local CA (etc/<domain>.pub-ca + etc/<domain>.priv-ca) needs
+# neither of them installed.
 
-# Compatibility shim: Crypt::OpenSSL::RSA >= 0.35 refuses use_pkcs1_padding as a
-# Marvin-attack mitigation (which targets PKCS#1 v1.5 *decryption*). Crypt::LE
-# calls it while preparing the ACME account key, which only ever *signs* (RS256)
-# - an operation unaffected by that padding mode. Wrap the call so certificate
-# issuance works on modern distros, while still honoring it where it functions.
-use Crypt::OpenSSL::RSA ();
-{
-    no warnings 'redefine';
-    if (my $orig = Crypt::OpenSSL::RSA->can('use_pkcs1_padding')) {
-	*Crypt::OpenSSL::RSA::use_pkcs1_padding = sub {
-	    eval { $orig->(@_) };
-	    return 1;
-	};
-    }
-}
-
-# The following line can be disabled if only single domain certificates with
-# HTTP verification are being issued
-use Net::DNS;
-
-$BaseDir = `. /etc/snif.conf; echo -n \$SNIF_CA_PROXY;`;
+# SNIF_CA_PROXY in the environment overrides /etc/snif.conf, e.g. to run an
+# isolated instance against a scratch CA proxy tree.
+$BaseDir = $ENV{SNIF_CA_PROXY} || `. /etc/snif.conf; echo -n \$SNIF_CA_PROXY;`;
 
 $WWWdir = "$BaseDir/public_html";
 $CSRdir = "$BaseDir/csr";
@@ -53,7 +38,34 @@ $EtcDir = "$BaseDir/etc";
 $LogDir = "$BaseDir/log";
 $CtlFifo = "$BaseDir/var/snif-certd.ctl";
 $Live = 1;
-$UserAgent = "snif-certd/0.95 (https://snif.host)";
+$UserAgent = "snif-certd/0.96 (https://snif.host)";
+
+# Local CA issuance: the openssl command line tool, and the validity of the
+# certificates it signs - the same as Let's Encrypt, so snif-arc and connector
+# renewal work the same way for both.
+$OpenSSL = "openssl";
+$LocalCADays = 90;
+
+# DNS-01: how long to wait for the nameservers of the zone to serve the
+# challenge records before asking Let's Encrypt to verify, and how often to look;
+# the timeout for each update sent to a nameserver.
+$DNSWait = 120;
+$DNSPoll = 2;
+$DNSUpdateTimeout = 5;
+
+# DNS-01 removals that failed, retried after later attempts; given up after
+# $PendingDays.
+$PendingFile = "$BaseDir/var/snif-certd.pending";
+$PendingDays = 7;
+
+# A node of a relay cluster names itself in etc/cluster.node (doc/cluster.md).
+# Then each issue goes through the local snif-syncd: the certificate lease,
+# whose length ($CrtLease) must match snif-syncd's (SNIF_CLUSTER_LEASE), and
+# ENSURE before a first certificate. Issued certificates and errors are queued
+# for the peers.
+$SyncSock = "$BaseDir/var/snif-syncd.sock";
+$QueueDir = "$BaseDir/sync-queue";
+$CrtLease = $ENV{SNIF_CLUSTER_LEASE} || `. /etc/snif.conf 2>/dev/null; echo -n \$SNIF_CLUSTER_LEASE;` || 600;
 
 sub dlog {
     my ($log, $msg) = @_;
@@ -76,13 +88,77 @@ sub seterr {
     $msg =~ s/\s+$//;
     if (open(my $e, '>', "$CertDir/$domain.err+")) {
 	print $e "$msg\n";
-	close($e) && rename("$CertDir/$domain.err+", "$CertDir/$domain.err");
+	close($e) && rename("$CertDir/$domain.err+", "$CertDir/$domain.err") && sync_enqueue("crt/$domain.err");
     }
+}
+
+sub cluster { return -e "$EtcDir/cluster.node" }
+
+# Queue a file (its path under the base directory) for every peer: a link in
+# each sync-queue/<peer>/, which snif-syncd keeps equal to its listed peers.
+# Needs no running daemon; the SYNC only wakes it.
+sub sync_enqueue {
+    my ($rel) = @_;
+    return if !cluster();
+    foreach my $q (grep { -d } glob("$QueueDir/*")) {
+	my $entry = "$q/$rel";
+	(my $dir = $entry) =~ s{/[^/]+$}{};
+	mkdir $dir, 02775 if !-d $dir;
+	symlink("$BaseDir/$rel", $entry);
+    }
+    if (my $s = sync_open()) {
+	print $s "SYNC\n";
+	close $s;
+    }
+}
+
+sub sync_open {
+    require IO::Socket::UNIX;
+    return IO::Socket::UNIX->new(Peer => $SyncSock, Type => Socket::SOCK_STREAM());
+}
+
+sub sync_ask {
+    my ($s, $req) = @_;
+    print $s "$req\n";
+    $s->flush;
+    my $r = <$s>;
+    $r = '' if !defined $r;
+    $r =~ s/\s+$//;
+    return $r;
+}
+
+# In a cluster, before an issue: every peer holds the CSR (a first certificate
+# only), the certificate lease is held, and a newer certificate from a peer is
+# installed. Returns (connection holding the lease) or (undef, reason). With
+# snif-syncd down, a renewal goes ahead alone and a first certificate waits.
+sub cluster_prepare {
+    my ($domain) = @_;
+    my $first = !-e "$CertDir/$domain.crt" && !glob("$BaseDir/arc/*/$domain.crt");
+    my $s = sync_open();
+    if (!$s) {
+	return (undef, "snif-syncd is not running; a first certificate waits") if $first;
+	return ('none');
+    }
+    if ($first) {
+	my $r = sync_ask($s, "ENSURE $domain");
+	return (undef, "ENSURE: $r") if $r ne 'STORED' && $r ne 'SAME';
+    }
+    my $l = sync_ask($s, "LEASE $domain");
+    return (undef, "LEASE: $l") if $l ne 'GRANTED' && $l ne 'ALONE';
+    sync_ask($s, "FETCH crt/$domain.crt");
+    return ($s);
+}
+
+sub cluster_done {
+    my ($s, $domain) = @_;
+    return if !ref $s;
+    sync_ask($s, "RELEASE $domain");
+    close $s;
 }
 
 sub lelog {
     my ($log, $le, $rs, $tag) = @_;
-    my $ok = ($rs == Crypt::LE::OK);
+    my $ok = ($rs == Crypt::LE::OK());
     my $er = $ok ? '' : $le->error_details();
     flog($log, $ok, $tag, $er);
     if (!$ok) {
@@ -92,36 +168,114 @@ sub lelog {
     return $ok;
 }
 
+sub load_le {
+    return 1 if $LEloaded;
+    eval {
+	require Crypt::LE;
+	# Compatibility shim: Crypt::OpenSSL::RSA >= 0.35 refuses use_pkcs1_padding as a
+	# Marvin-attack mitigation (which targets PKCS#1 v1.5 *decryption*). Crypt::LE
+	# calls it while preparing the ACME account key, which only ever *signs* (RS256)
+	# - an operation unaffected by that padding mode. Wrap the call so certificate
+	# issuance works on modern distros, while still honoring it where it functions.
+	require Crypt::OpenSSL::RSA;
+	no warnings 'redefine';
+	if (my $orig = Crypt::OpenSSL::RSA->can('use_pkcs1_padding')) {
+	    *Crypt::OpenSSL::RSA::use_pkcs1_padding = sub {
+		eval { $orig->(@_) };
+		return 1;
+	    };
+	}
+	1;
+    } || return 0;
+    return $LEloaded = 1;
+}
+
+sub load_dns {
+    return eval { require Net::DNS; 1 };
+}
+
+# The message of the last failed require, without the @INC list and source line.
+sub load_error {
+    my $er = $@;
+    $er =~ s/ \(\@INC.*//s;
+    $er =~ s/ at \S+ line \d+.*//s;
+    $er =~ s/\s+$//;
+    return $er;
+}
+
 sub getcert {
     my ($domain) = @_;
+    return -4 if ($domain !~ /^\w([\.\-]?\w)*$/);
     return -1 if (-e("$CertDir/$domain.crt") && (stat("$CertDir/$domain.crt"))[9] > time - 86400);
     return -2 if (-e("$LogDir/$domain.log") && (stat("$LogDir/$domain.log"))[9] > time - 3600);
+    my $sync;
+    $LeaseUntil = undef;
+    if (cluster()) {
+	# Logged here rather than in log/<domain>.log, whose mtime is the
+	# one-hour retry throttle: the next request tries again.
+	my $why;
+	($sync, $why) = cluster_prepare($domain);
+	if (!$sync) {
+	    dlog(STDERR, "$domain: not issued now: $why");
+	    return -5;
+	}
+	if (-e("$CertDir/$domain.crt") && (stat("$CertDir/$domain.crt"))[9] > time - 86400) {
+	    cluster_done($sync, $domain);
+	    return -1;
+	}
+	$LeaseUntil = time + $CrtLease - 5;
+    }
+    my $r = getcert_issue($domain);
+    cluster_done($sync, $domain);
+    return $r;
+}
+
+sub getcert_issue {
+    my ($domain) = @_;
     open LOG, ">>$LogDir/$domain.log";
     $ErrDomain = $domain;
     my $base = base_domain($domain);
-    $mode = $base && -f("$EtcDir/$base.tsig") ? 'dns' : 'http';
-    my $le = new Crypt::LE(live => $Live, ua => $UserAgent);
-    dlog(LOG, "issue $domain (live=$Live mode=$mode) ...");
-    lelog(LOG, $le, $le->load_account_key("$EtcDir/account.key"), "load_account_key") || return;
-    lelog(LOG, $le, $le->load_csr("$CSRdir/$domain.csr", ($mode eq 'http' ? "" : "*.") . $domain), "load_csr") || return;
-    lelog(LOG, $le, $le->register(), "register") || return;
-    lelog(LOG, $le, $le->accept_tos(), "accept_tos") || return;
-    lelog(LOG, $le, $le->request_challenge(), "request_challenge") || return;
-    lelog(LOG, $le, $le->accept_challenge(\&process_challenge, {mode => $mode}, $mode), "accept_challenge") || return;
-    lelog(LOG, $le, $le->verify_challenge(\&log_challenge, {logfd => LOG}, $mode), "verify_challenge") || return;
-    lelog(LOG, $le, $le->request_certificate(), "request_certificate") || return;
-    lelog(LOG, $le, $le->request_issuer_certificate(), "request_issuer_certificate") || return;
-    my $cert = $le->certificate();
-    my $chain = $le->issuer();
+    my ($cert, $chain);
+    if ($base && (-e("$EtcDir/$base.pub-ca") || -e("$EtcDir/$base.priv-ca"))) {
+	$mode = 'local';
+	dlog(LOG, "issue $domain (mode=$mode) ...");
+	my $er;
+	($cert, $chain, $er) = issue_local($domain, $base);
+	flog(LOG, $cert, "local_ca", $er);
+	if (!$cert) {
+	    seterr($domain, "local_ca: $er");
+	    close LOG;
+	    return;
+	}
+    } else {
+	$mode = $base && -f("$EtcDir/$base.tsig") ? 'dns' : 'http';
+	dlog(LOG, "issue $domain (live=$Live mode=$mode) ...");
+	if (!load_le() || ($mode eq 'dns' && !load_dns())) {
+	    my $er = load_error();
+	    flog(LOG, 0, "load_modules", $er);
+	    seterr($domain, "load_modules: $er");
+	    close LOG;
+	    return;
+	}
+	my $le = Crypt::LE->new(live => $Live, ua => $UserAgent);
+	my $ok = issue_le($le, $domain, $mode);
+	# Whatever the outcome, remove the challenge records this attempt added.
+	cleanup_challenges() if ($mode eq 'dns');
+	return if !$ok;
+	$cert = $le->certificate();
+	$chain = $le->issuer();
+    }
     if ($cert) {
 	open CRT, ">$CertDir/$domain.crt+";
 	print CRT $cert;
 	print CRT "\n";
 	print CRT $chain;
 	if (close CRT) {
-	    unlink "$CertDir/$domain.crt";
+	    # rename() replaces the old certificate in one step, so a reader
+	    # never finds none.
 	    if (rename("$CertDir/$domain.crt+", "$CertDir/$domain.crt")) {
 		unlink "$CertDir/$domain.err";
+		sync_enqueue("crt/$domain.crt");
 	    } else {
 		flog(LOG, 0, "rename");
 		seterr($domain, "rename: could not store the issued certificate");
@@ -136,6 +290,133 @@ sub getcert {
     }
     close(LOG) || return -3;
     return 0;
+}
+
+# The ACME steps for $domain. Returns true once the certificate is issued; on
+# failure lelog() has recorded the error and closed LOG.
+sub issue_le {
+    my ($le, $domain, $mode) = @_;
+    lelog(LOG, $le, $le->load_account_key("$EtcDir/account.key"), "load_account_key") || return;
+    lelog(LOG, $le, $le->load_csr("$CSRdir/$domain.csr", ($mode eq 'http' ? "" : "*.") . $domain), "load_csr") || return;
+    lelog(LOG, $le, $le->register(), "register") || return;
+    lelog(LOG, $le, $le->accept_tos(), "accept_tos") || return;
+    lelog(LOG, $le, $le->request_challenge(), "request_challenge") || return;
+    lelog(LOG, $le, $le->accept_challenge(\&process_challenge, {mode => $mode}, $mode), "accept_challenge") || return;
+    if ($mode eq 'dns') {
+	my ($ok, $er) = wait_challenges();
+	flog(LOG, $ok, "wait_challenges", $er);
+	if (!$ok) {
+	    seterr($domain, "wait_challenges: $er");
+	    close LOG;
+	    return;
+	}
+    }
+    lelog(LOG, $le, $le->verify_challenge(\&log_challenge, {logfd => LOG}, $mode), "verify_challenge") || return;
+    if ($LeaseUntil && time > $LeaseUntil) {
+	# Past the certificate lease another node may be issuing: give up
+	# before the order is finalized.
+	flog(LOG, 0, "lease", "the issue ran past the certificate lease");
+	close LOG;
+	return;
+    }
+    lelog(LOG, $le, $le->request_certificate(), "request_certificate") || return;
+    lelog(LOG, $le, $le->request_issuer_certificate(), "request_issuer_certificate") || return;
+    return 1;
+}
+
+# Issue the certificate for $domain from the local CA of its base domain, with
+# no domain validation: etc/<base>.priv-ca (the CA private key) signs the
+# connector's CSR, and etc/<base>.pub-ca (the CA certificate - a root, or an
+# intermediate followed by the rest of its chain) becomes the issuer chain. The
+# certificate name is the wildcard *.<domain>, as with DNS-01 issuance.
+# Returns (certificate, chain), or (undef, undef, error message).
+sub issue_local {
+    my ($domain, $base) = @_;
+    my $pubca = "$EtcDir/$base.pub-ca";
+    my $privca = "$EtcDir/$base.priv-ca";
+    my $csr = "$CSRdir/$domain.csr";
+    my $name = "*.$domain";
+    return (undef, undef, "etc/$base.pub-ca is missing or unreadable") if (!-r $pubca);
+    return (undef, undef, "etc/$base.priv-ca is missing or unreadable") if (!-r $privca);
+    return (undef, undef, "no CSR for $domain") if (!-r $csr);
+
+    my ($ok, $out) = run_openssl('req', '-in', $csr, '-noout', '-verify', '-subject', '-nameopt', 'sep_multiline,sname');
+    return (undef, undef, "CSR: " . osslerr($out)) if (!$ok || $out !~ /verify OK/);
+    my @cn = ($out =~ /^\s*CN\s*=\s*(.*?)\s*$/mg);
+    return (undef, undef, "CSR: CN is " . (@cn ? join(', ', @cn) : 'missing') . ", expected $name") if (@cn != 1 || $cn[0] ne $name);
+
+    my $serial;
+    if (open(my $rnd, '<:raw', '/dev/urandom')) {
+	read($rnd, $serial, 20);
+	close $rnd;
+    }
+    return (undef, undef, "no randomness for the serial number") if (length($serial) != 20);
+    $serial = '0x' . sprintf('%02x', (ord($serial) & 0x7f) | 0x40) . unpack('H*', substr($serial, 1));
+
+    my $ext = "$CertDir/$domain.ext+";
+    my $leaf = "$CertDir/$domain.local+";
+    open(my $ef, '>', $ext) || return (undef, undef, "write extensions: $!");
+    print $ef "basicConstraints = critical, CA:FALSE\n",
+	"extendedKeyUsage = serverAuth, clientAuth\n",
+	"subjectKeyIdentifier = hash\n",
+	"authorityKeyIdentifier = keyid, issuer\n",
+	"subjectAltName = DNS:$name\n";
+    close($ef) || return (undef, undef, "write extensions: $!");
+    ($ok, $out) = run_openssl('x509', '-req', '-in', $csr, '-CA', $pubca, '-CAkey', $privca,
+	'-set_serial', $serial, '-days', $LocalCADays, '-extfile', $ext, '-out', $leaf);
+    unlink $ext;
+    if (!$ok) {
+	unlink $leaf;
+	return (undef, undef, "sign: " . osslerr($out));
+    }
+    # Check the result the way a peer would: chains to .pub-ca, usable for TLS,
+    # and within any name constraints the CA carries.
+    ($ok, $out) = run_openssl('verify', '-partial_chain', '-purpose', 'sslserver', '-CAfile', $pubca, $leaf);
+    if (!$ok || $out !~ /: OK$/m) {
+	unlink $leaf;
+	return (undef, undef, "verify: " . osslerr($out));
+    }
+    my $cert = slurp($leaf);
+    unlink $leaf;
+    my $chain = slurp($pubca);
+    return (undef, undef, "could not read the signed certificate or the CA chain") if (!$cert || !$chain);
+    return ($cert, $chain);
+}
+
+# Run the openssl command line tool without a shell.
+# Returns (success, stdout and stderr combined).
+sub run_openssl {
+    my $pid = open(my $fh, '-|');
+    return (0, "fork: $!") if (!defined $pid);
+    if (!$pid) {
+	open(STDERR, '>&', \*STDOUT);
+	exec($OpenSSL, @_);
+	print STDOUT "exec $OpenSSL: $!\n";
+	require POSIX;
+	POSIX::_exit(127);
+    }
+    my $out = do { local $/; <$fh> };
+    my $ok = close($fh);
+    $out =~ s/\s+$//;
+    return ($ok, $out);
+}
+
+# Condense openssl output into a one-line error message.
+sub osslerr {
+    my ($out) = @_;
+    my @l = grep { /\S/ && !/^(Certificate request self-signature ok|subject=)/ } split(/\n/, $out);
+    s/^[0-9A-F]+:error:[0-9A-F]+:/error:/ foreach @l;
+    my $msg = join('; ', @l);
+    $msg = substr($msg, 0, 300) . '...' if (length($msg) > 300);
+    return $msg || 'failed';
+}
+
+sub slurp {
+    my ($file) = @_;
+    open(my $fh, '<', $file) || return undef;
+    my $s = do { local $/; <$fh> };
+    close $fh;
+    return $s;
 }
 
 sub base_domain {
@@ -162,20 +443,174 @@ sub process_challenge_http {
     return close CH;
 };
 
+# DNS-01 challenge records are added, never replaced. A certificate for
+# example.com and *.example.com has two challenges for the same name, all
+# accepted before any is verified, so replacing the RRset would delete the
+# first value before Let's Encrypt looks for it; two attempts running at once
+# would do the same to each other. Each value added is remembered in
+# @ChallengeRRs and removed by cleanup_challenges().
+#
+# The value goes to every nameserver of the zone that holds the challenge
+# record (challenge_target), signed with etc/<base>.tsig. The attempt goes on
+# if at least one server accepted it, and waits on every server that answered:
+# one that refused may be a secondary that gets the value by zone transfer. A
+# server that did not answer is not waited on, since resolvers skip it too.
 sub process_challenge_dns {
     my $challenge = shift;
-    my $domain = base_domain($challenge->{host});
-    my $r = new Net::DNS::Resolver();
-    $r->nameservers("ns.$domain");
-    my $u = new Net::DNS::Update($domain, 'IN');
-    $u->push(update => rr_del("snif-pool.$domain. TXT"));
-    $u->push(update => rr_add("snif-pool.$domain. 0 TXT $challenge->{record}"));
-    $u->sign_tsig("$EtcDir/$domain.tsig");
-    my $rs = $r->send($u);
-    return 0 if !$rs;
-    my $h = $rs->header;
-    return ($h && ($h->rcode eq 'NOERROR'));
+    my $base = base_domain($challenge->{host});
+    my ($name, $zone) = challenge_target($challenge->{host}, $base);
+    my $key = "$EtcDir/$base.tsig";
+    my %rs = dns_update_all($zone, $key, Net::DNS::rr_add("$name 0 TXT $challenge->{record}"));
+    my @accepted = grep { $rs{$_} eq 'ok' } sort keys %rs;
+    my @answered = grep { $rs{$_} ne 'no answer' } sort keys %rs;
+    foreach my $ns (sort keys %rs) {
+	dlog(STDERR, "update $name TXT $challenge->{record} on $ns: $rs{$ns}") if $rs{$ns} ne 'ok';
+    }
+    return 0 if !@accepted;
+    push @ChallengeRRs, {zone => $zone, key => $key, name => $name, value => $challenge->{record},
+	accepted => \@accepted, wait => \@answered};
+    return 1;
 };
+
+# Where the DNS-01 value for $host goes: the name _acme-challenge.<host> is an
+# alias for, followed to its end, and the zone that holds that name. Several
+# base domains can point at one pool name this way. Falls back to
+# snif-pool.<base> in zone <base> when the alias cannot be followed.
+sub challenge_target {
+    my ($host, $base) = @_;
+    my $r = Net::DNS::Resolver->new();
+    my $name = "_acme-challenge.$host";
+    my $hops = 0;
+    while ($hops < 8) {
+	my $p = $r->send($name, 'CNAME') || last;
+	my ($cn) = grep { $_->type eq 'CNAME' } $p->answer;
+	last if !$cn;
+	$name = $cn->cname;
+	$name =~ s/\.$//;
+	$hops++;
+    }
+    if ($hops) {
+	my $zone = zone_of($name);
+	return ("$name.", $zone) if $zone;
+    }
+    dlog(STDERR, "challenge: could not follow _acme-challenge.$host, using snif-pool.$base");
+    return ("snif-pool.$base.", $base);
+}
+
+# The zone that holds $name: its own SOA, or the one in the authority section.
+sub zone_of {
+    my ($name) = @_;
+    my $p = Net::DNS::Resolver->new()->send($name, 'SOA') || return undef;
+    my ($soa) = grep { $_->type eq 'SOA' } ($p->answer, $p->authority);
+    return undef if !$soa;
+    my $zone = $soa->owner;
+    $zone =~ s/\.$//;
+    return $zone;
+}
+
+# Send one TSIG-signed update for $zone to every nameserver of the zone, or to
+# ns.<zone> if the NS set cannot be looked up.
+# Returns (nameserver => 'ok' | 'refused <rcode>' | 'no answer', ...).
+sub dns_update_all {
+    my ($zone, $key, @rr) = @_;
+    my @ns = zone_ns($zone);
+    @ns = ("ns.$zone") if !@ns;
+    return map { my $ns = $_; ($ns => dns_update($zone, $ns, $key, @rr)) } @ns;
+}
+
+# Net::DNS leaves $_ undefined (sign_tsig reads the key file with while (<>)),
+# which would empty a caller's map or foreach variable aliased to it.
+sub dns_update {
+    my ($zone, $ns, $key, @rr) = @_;
+    local $_;
+    my $r = Net::DNS::Resolver->new(udp_timeout => $DNSUpdateTimeout, tcp_timeout => $DNSUpdateTimeout);
+    $r->nameservers($ns);
+    my $u = Net::DNS::Update->new($zone, 'IN');
+    $u->push(update => $_) foreach (@rr);
+    $u->sign_tsig($key);
+    my $rs = $r->send($u);
+    return 'no answer' if !$rs;
+    my $rc = $rs->header->rcode;
+    return $rc eq 'NOERROR' ? 'ok' : "refused $rc";
+}
+
+# Remove exactly the values this attempt added, leaving any other attempt's:
+# from every server that accepted each one. A removal that fails is kept in
+# $PendingFile and tried again here after later attempts.
+sub cleanup_challenges {
+    my @todo = pending_load();
+    foreach my $c (@ChallengeRRs) {
+	push @todo, map { [time, $c->{zone}, $_, $c->{key}, $c->{name}, $c->{value}] } @{$c->{accepted}};
+    }
+    @ChallengeRRs = ();
+    my @left;
+    foreach my $d (@todo) {
+	my ($t, $zone, $ns, $key, $name, $value) = @$d;
+	my $rs = dns_update($zone, $ns, $key, Net::DNS::rr_del("$name TXT $value"));
+	next if $rs eq 'ok';
+	if ($t < time - $PendingDays * 86400) {
+	    dlog(STDERR, "cleanup: giving up removing $name TXT $value from $ns ($rs)");
+	    next;
+	}
+	dlog(STDERR, "cleanup: could not remove $name TXT $value from $ns ($rs), will retry");
+	push @left, $d;
+    }
+    pending_save(@left);
+}
+
+sub pending_load {
+    open(my $fh, '<', $PendingFile) || return ();
+    my @p = grep { @$_ == 6 } map { chomp; [split /\t/] } <$fh>;
+    close $fh;
+    return @p;
+}
+
+sub pending_save {
+    my @p = @_;
+    if (!@p) {
+	unlink $PendingFile;
+	return;
+    }
+    if (open(my $fh, '>', "$PendingFile+")) {
+	print $fh join("\t", @$_), "\n" foreach @p;
+	return if close($fh) && rename("$PendingFile+", $PendingFile);
+    }
+    dlog(STDERR, "cleanup: could not write $PendingFile: $!");
+}
+
+# Wait until every nameserver that answered each update serves the value, so
+# that Let's Encrypt finds it whichever server it asks: a secondary follows the
+# primary by NOTIFY and can lag it. Returns (1), or (0, error message) after
+# $DNSWait seconds.
+sub wait_challenges {
+    my $deadline = time + $DNSWait;
+    while (1) {
+	my @missing;
+	foreach my $c (@ChallengeRRs) {
+	    foreach my $ns (@{$c->{wait}}) {
+		push @missing, "$c->{name} on $ns" if !txt_served($ns, $c->{name}, $c->{value});
+	    }
+	}
+	return (1) if !@missing;
+	return (0, "not served after ${DNSWait}s: " . join(', ', @missing)) if time >= $deadline;
+	sleep $DNSPoll;
+    }
+}
+
+sub zone_ns {
+    my ($domain) = @_;
+    my $p = Net::DNS::Resolver->new()->query($domain, 'NS') || return ();
+    return map { $_->nsdname } grep { $_->type eq 'NS' } $p->answer;
+}
+
+# Does nameserver $ns answer $name with a TXT record holding $value?
+sub txt_served {
+    my ($ns, $name, $value) = @_;
+    local $_;
+    my $r = Net::DNS::Resolver->new(nameservers => [$ns], recurse => 0, udp_timeout => $DNSUpdateTimeout);
+    my $p = $r->send($name, 'TXT') || return 0;
+    return scalar grep { $_->type eq 'TXT' && join('', $_->txtdata) eq $value } $p->answer;
+}
 
 sub log_challenge {
     my ($ch, $p) = @_;
@@ -184,6 +619,9 @@ sub log_challenge {
     }
     return 1;
 }
+
+# Loaded rather than run (e.g. by a test with do/require): define the subs only.
+return 1 if caller;
 
 close STDERR;
 open STDERR, ">>$LogDir/log_snif-certd";

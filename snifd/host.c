@@ -24,6 +24,7 @@
 #include <stddef.h>
 #include <string.h>
 #include <stdlib.h>
+#include <stdio.h>
 #include "jTree.h"
 #include "sock.h"
 #include "ctl.h"
@@ -33,6 +34,21 @@
 
 
 jTree *snif_host_tree = NULL;
+
+typedef struct snif_host_held {
+    struct snif_host_held *prev;
+    struct snif_host_held *next;
+    snif_host *host;
+    unsigned long expire;
+    int len;
+    char connid[24];
+    char ntfy[1];
+} snif_host_held;
+
+jTree *snif_host_heldtree = NULL;
+snif_host_held *snif_host_heldfirst = NULL;
+snif_host_held *snif_host_heldlast = NULL;
+int snif_host_heldct = 0;
 
 
 int snif_host_jtreefn(void *data, void *term, void *arg) {
@@ -86,5 +102,66 @@ void snif_host_chkalive(snif_host *host) {
     for (cln = host->clients; cln; cln = cln->chain) if (!cln->peer) {
 	char ntfy[1024];
 	snif_cln_push(cln, snif_cln_notify(cln, ntfy));
+    }
+}
+
+int snif_host_heldfn(void *data, void *term, void *arg) {
+    return strcmp(((snif_host_held *) data)->connid, (const char *) term);
+}
+
+static void snif_host_heldfree(snif_host_held *hd) {
+#ifdef SNIF_DEBUG
+    printf("snif_host_heldfree connid=%s host=%s\n", hd->connid, hd->host->hostname);
+#endif
+    void **phd = jTree_seek(&snif_host_heldtree, hd->connid, NULL, &snif_host_heldfn, NULL);
+    if (phd && *phd == hd) jTree_delete(&snif_host_heldtree, phd);
+    *(hd->prev ? &hd->prev->next : &snif_host_heldfirst) = hd->next;
+    *(hd->next ? &hd->next->prev : &snif_host_heldlast) = hd->prev;
+    snif_host_heldct--;
+    free(hd);
+}
+
+static void snif_host_heldexpire() {
+    unsigned long t = snif_time();
+    while (snif_host_heldfirst && snif_host_heldfirst->expire <= t) snif_host_heldfree(snif_host_heldfirst);
+}
+
+void snif_host_hold(snif_host *host, const char *connid, const char *ntfy, int l, int tmout) {
+    if (strlen(connid) >= sizeof(snif_host_heldfirst->connid)) return;
+    snif_host_heldexpire();
+    snif_host_held *hd = malloc(offsetof(snif_host_held, ntfy) + l);
+    if (!hd) return;
+    unsigned char depth = 0;
+    snif_host_held **phd = (snif_host_held **) jTree_seek(&snif_host_heldtree, (void *) connid, NULL, &snif_host_heldfn, &depth);
+    if (*phd) {
+	free(hd);
+	return;
+    }
+#ifdef SNIF_DEBUG
+    printf("snif_host_hold connid=%s host=%s\n", connid, host->hostname);
+#endif
+    strcpy(hd->connid, connid);
+    hd->host = host;
+    hd->expire = snif_time() + tmout;
+    hd->len = l;
+    memcpy(hd->ntfy, ntfy, l);
+    hd->next = NULL;
+    hd->prev = snif_host_heldlast;
+    *(hd->prev ? &hd->prev->next : &snif_host_heldfirst) = hd;
+    snif_host_heldlast = *phd = hd;
+    if (++snif_host_heldct > SNIF_HOST_MAXHELD) snif_host_heldfree(snif_host_heldfirst);
+}
+
+void snif_host_unhold(const char *connid) {
+    snif_host_held **phd = (snif_host_held **) jTree_seek(&snif_host_heldtree, (void *) connid, NULL, &snif_host_heldfn, NULL);
+    if (phd && *phd) snif_host_heldfree(*phd);
+}
+
+void snif_host_sendheld(snif_host *host, snif_sock *ctl) {
+    snif_host_heldexpire();
+    snif_host_held *hd, *nx;
+    for (hd = snif_host_heldfirst; hd; hd = nx) {
+	nx = hd->next;
+	if (hd->host == host && snif_ctl_out(ctl, hd->ntfy, hd->len) > 0) snif_host_heldfree(hd);
     }
 }

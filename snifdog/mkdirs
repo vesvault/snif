@@ -23,12 +23,36 @@
 # **************************************************************************/
 
 # Create the runtime directories snifdog uses for its pin database, source
-# cursor, and evidence bundles. Resolve the base dir from the snifdog conf
-# (SNIFDOG_DIR); fall back to this script's own directory.
+# cursor, and evidence bundles: for /etc/snif/snifdog.conf, and for each
+# /etc/snif/snifdog.d/*.conf. A configuration's base dir is its SNIFDOG_DIR,
+# else what bin/snifdog defaults to: /var/lib/snif/snifdog for snifdog.conf,
+# /var/lib/snif/snifdog/<base> for the others. With no configuration at all,
+# fall back to this script's own directory.
 
-[ -r /etc/snif/snifdog.conf ] && . /etc/snif/snifdog.conf
-SNIFDOG_DIR="${SNIFDOG_DIR:-$(dirname "$0")}"
+mkstate() {
+    mkdir -p -m 02775 "$1/pins"
+    mkdir -p -m 02755 "$1/var"
+    mkdir -p -m 02755 "$1/evidence"
+}
 
-mkdir -m 02775 "$SNIFDOG_DIR/pins"
-mkdir -m 02755 "$SNIFDOG_DIR/var"
-mkdir -m 02755 "$SNIFDOG_DIR/evidence"
+# Source a configuration the way bin/snifdog does: the relay conf first.
+loadconf() {
+    for f in /etc/snif/snif.conf /etc/snif.conf; do
+	if [ -r "$f" ]; then . "$f"; break; fi
+    done
+    . "$1"
+}
+
+found=
+if [ -r /etc/snif/snifdog.conf ]; then
+    found=1
+    ( loadconf /etc/snif/snifdog.conf; mkstate "${SNIFDOG_DIR:-/var/lib/snif/snifdog}" )
+fi
+for c in /etc/snif/snifdog.d/*.conf; do
+    [ -r "$c" ] || continue
+    found=1
+    ( loadconf "$c"
+      base=$(printf '%s' "${SNIFDOG_BASE:-snif.xyz}" | tr 'A-Z' 'a-z')
+      mkstate "${SNIFDOG_DIR:-/var/lib/snif/snifdog/$base}" )
+done
+[ -n "$found" ] || mkstate "$(dirname "$0")"

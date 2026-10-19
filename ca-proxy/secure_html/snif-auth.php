@@ -27,6 +27,8 @@ $CfgDir = "$BaseDir/cfg";
 $CsrDir = "$BaseDir/csr";
 $AuthDir = "$BaseDir/auth";
 
+require_once "$BaseDir/inc/snif-cluster.php";
+
 if ($_SERVER['REQUEST_METHOD'] == 'OPTIONS') exit;
 
 $Host = strtolower(preg_replace('/\:.*/', '', $_SERVER['HTTP_HOST']));
@@ -48,7 +50,11 @@ if ($cn == '') {
 	header("HTTP/1.0 502 Bad Gateway");
 	exit;
     }
-    $wc = file_exists("$EtcDir/$d.tsig") ? "*." : "";
+    snif_cluster_enqueue("cfg/$cn.cfg");
+    # A wildcard for the device zone wherever bin/snif-certd can issue one: a
+    # local CA (etc/<d>.pub-ca / etc/<d>.priv-ca) or DNS-01 (etc/<d>.tsig).
+    # Otherwise a single-host cert, verified over HTTP-01.
+    $wc = (file_exists("$EtcDir/$d.pub-ca") || file_exists("$EtcDir/$d.priv-ca") || file_exists("$EtcDir/$d.tsig")) ? "*." : "";
     header("X-SNIF-CN: $wc$cn");
     # Optional server-side key algorithm policy: a per-base-domain etc/<d>.keyalgo
     # or the server-wide etc/keyalgo (one line, e.g. "EC:P-256"). Returned here,
@@ -66,12 +72,13 @@ if ($cn == '') {
     exit;
 }
 
-if (!file_exists("$CfgDir/$cn.cfg")) {
+if (!snif_cluster_have("cfg/$cn.cfg")) {
     header("HTTP/1.0 404 Not Found");
     exit;
 }
 
-if (file_exists("$AuthDir/$cn.auth")) {
+# In a cluster the name may have been approved on another node already.
+if (file_exists("$AuthDir/$cn.auth") || (snif_cluster_node() && snif_cluster_req("FETCH auth/$cn.auth") === 'FOUND')) {
     header("HTTP/1.0 202 Accepted");
     exit;
 }
@@ -114,6 +121,7 @@ if (!file_put_contents("$AuthDir/$cn.auth", $auth)) {
     header("HTTP/1.0 502 Bad Gateway");
     exit;
 }
+snif_cluster_enqueue("auth/$cn.auth");
 
 header("HTTP/1.0 202 Accepted");
 

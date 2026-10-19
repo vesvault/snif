@@ -1,5 +1,73 @@
 snif NEWS -- history of user-visible changes
 
+Version 1.07
+------------
+
+* libsnif: the control-message builders (snif_conn_start, _forward,
+  _reject, _abuse, _msg) compared strlen() with an int length minus a
+  margin, so a buffer smaller than the margin passed the check and
+  sprintf() wrote past it. They now return 0 for such a buffer.
+  snif_conn_abuse() also reserves room for an 11-character score
+  (-2147483648). curl_easy_setopt() gets a long for CURLOPT_VERBOSE,
+  CURLOPT_UPLOAD and CURLOPT_INFILESIZE. snifd always passed large enough
+  buffers, so it was not affected. No interface change; the libtool
+  version is 0:1:0.
+
+* relay: a CONNECT read from an input FIFO for a device that has no
+  control connection here is held instead of dropped, and sent when the
+  device connects, after this relay's own waiting clients. A held CONNECT
+  is dropped on the client's CLEAR or CLOSE, or at the client timeout; at
+  most SNIF_HOST_MAXHELD (4096) are held, oldest dropped first. This lets
+  a client on one node of a relay cluster reach a device that connects to
+  another node later, for example after an APNs wake.
+
+* snifd: outgoing connections time out after 5 s per address
+  (SNIF_SOCK_CONNTMOUT) instead of the kernel's SYN timeout, which
+  stalled the whole process for about two minutes on an address that
+  drops packets. This covers the connector's control and service
+  connections and the relay static map.
+
+* snifd: a -DSNIF_DEBUG build compiles again (stdio.h was missing).
+
+* ca-proxy: a base domain can issue from a local CA (etc/<domain>.pub-ca
+  and etc/<domain>.priv-ca) instead of Let's Encrypt, for closed systems
+  whose connectors and relay trust a private root. snif-certd signs the
+  CSR with the openssl CLI; certificates are wildcards for the device
+  zone, valid 90 days, with .pub-ca as the chain. Crypt::LE,
+  Crypt::OpenSSL::RSA and Net::DNS are loaded only when needed.
+  snif-arc keeps such a domain's published root bundle,
+  crt/<domain>.crt, instead of archiving it after 75 days.
+
+* ca-proxy: DNS-01 in snif-certd adds its challenge values instead of
+  replacing the record set, so a name and its wildcard, or two attempts
+  at once, no longer remove each other's. It follows the alias of
+  _acme-challenge.<host>, so several base domains can share one pool
+  name, sends each update to every nameserver of the zone with a 5 s
+  timeout, waits until every server that answered serves the values, and
+  removes exactly its own values afterwards, retrying a failed removal
+  for up to 7 days (var/snif-certd.pending).
+
+* relay cluster (doc/cluster.md): several relay nodes can serve one set
+  of names. snif-syncd keeps the CA proxy state (allocations, CSRs,
+  approvals, certificates, wake tokens, counters) in step across the
+  nodes over ssh; bin/snif-tunnel and snif-tunnel@.service carry each
+  node's pushes to its peers. The CA proxy, snif-certd and snif-apnsd
+  work through it when etc/cluster.node names the node; without it a
+  relay behaves as before. See SNIF_CLUSTER_* in etc/snif.conf.
+
+* snif-apnsd: a wake token is replaced by rename, so a reader never sees
+  a partial one; its last-wake time is kept.
+
+* snifdog: one configuration per base domain. The cron entry and
+  snifdog@.service run /etc/snif/snifdog.conf and every
+  /etc/snif/snifdog.d/*.conf; each base gets its own state directory,
+  which snifdog refuses to share, and a lock per pass.
+
+* ca-proxy: the VES approval limit is a leaky bucket instead of 11
+  approvals per account for life. Each approval adds one and one leaks
+  out per refill time; etc/<email>.ves-limit, else etc/ves-limit, sets
+  the limit and the refill time (default "10 1d").
+
 Version 1.06
 ------------
 

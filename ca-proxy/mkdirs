@@ -26,7 +26,9 @@
 # and scripts expect. Resolve the base dir from /etc/snif.conf (the same
 # SNIF_CA_PROXY the daemons read); fall back to this script's own directory.
 
-[ -r /etc/snif.conf ] && . /etc/snif.conf
+for f in /etc/snif/snif.conf /etc/snif.conf; do
+    [ -r $f ] && . $f && break
+done
 SNIF_DIR="${SNIF_CA_PROXY:-$(dirname "$0")}"
 
 mkdir -m 02775 "$SNIF_DIR/crt"
@@ -37,7 +39,17 @@ mkdir -m 02755 "$SNIF_DIR/arc"
 mkdir -m 02755 "$SNIF_DIR/var"
 mkdir -m 02775 "$SNIF_DIR/apns"
 mkdir -m 02775 "$SNIF_DIR/log"
+mkdir -m 02775 "$SNIF_DIR/sync-queue"
 
 mkfifo -m 0620 "$SNIF_DIR/var/snif-certd.ctl"
 mkfifo -m 0620 "$SNIF_DIR/var/snifd-in.ctl"
 mkfifo -m 0640 "$SNIF_DIR/var/snifd-out-apnsd.ctl"
+
+# A relay cluster node (doc/cluster.md): a FIFO pair and a queue per peer.
+# Safe to run again after SNIF_CLUSTER_PEERS changes.
+for p in $SNIF_CLUSTER_PEERS; do
+    n=${p%%=*}
+    [ -p "$SNIF_DIR/var/snifd-out-peer-$n.ctl" ] || mkfifo -m 0620 "$SNIF_DIR/var/snifd-out-peer-$n.ctl"
+    [ -p "$SNIF_DIR/var/snifd-in-peer-$n.ctl" ] || mkfifo -m 0620 "$SNIF_DIR/var/snifd-in-peer-$n.ctl"
+    [ -d "$SNIF_DIR/sync-queue/$n" ] || mkdir -m 02775 "$SNIF_DIR/sync-queue/$n"
+done

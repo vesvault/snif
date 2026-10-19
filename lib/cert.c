@@ -145,7 +145,7 @@ void *snif_cert_curlfn(snif_cert *cert) {
 #ifdef SNIF_CAINFO
     curl_easy_setopt(curl, CURLOPT_CAINFO, SNIF_CAINFO);
 #endif
-    if (cert->flags & SNIF_F_DEBUG) curl_easy_setopt(curl, CURLOPT_VERBOSE, 1);
+    if (cert->flags & SNIF_F_DEBUG) curl_easy_setopt(curl, CURLOPT_VERBOSE, 1L);
     return curl;
 }
 
@@ -330,11 +330,11 @@ static int snif_cert_sendreq(snif_cert *cert, X509_REQ *req) {
     snif_cert_apiurl(cert, buf, ".csr");
     curl_easy_setopt(curl, CURLOPT_URL, buf);
     struct curl_slist *hdrs = curl_slist_append(NULL, snif_cert_curlua(cert, buf));
-    curl_easy_setopt(curl, CURLOPT_UPLOAD, 1);
+    curl_easy_setopt(curl, CURLOPT_UPLOAD, 1L);
     hdrs = curl_slist_append(hdrs, "Content-Type: application/pkcs10");
     curl_easy_setopt(curl, CURLOPT_READFUNCTION, &snif_cert_curlsendfn);
     curl_easy_setopt(curl, CURLOPT_READDATA, &up);
-    curl_easy_setopt(curl, CURLOPT_INFILESIZE, up.len);
+    curl_easy_setopt(curl, CURLOPT_INFILESIZE, (long) up.len);
     curl_easy_setopt(curl, CURLOPT_HTTPHEADER, hdrs);
     curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, &snif_cert_curlhdrfn);
     curl_easy_setopt(curl, CURLOPT_HEADERDATA, cert);
@@ -441,7 +441,7 @@ int snif_cert_download(snif_cert *cert) {
     struct curl_slist *hdrs = curl_slist_append(NULL, "Accept: application/x-x509-ca-cert, application/pkix-cert");
     hdrs = curl_slist_append(hdrs, snif_cert_curlua(cert, buf));
     if ((cert->flags & SNIF_F_DIAGS) && cert->tlserr.line) {
-	sprintf(buf, "X-SNIF-Diags: l=%hd;e=%lx;c=%hd;d=%hd;t=%llu", cert->tlserr.line, cert->tlserr.code, cert->tlserr.ctxcode, cert->tlserr.ctxdepth, time(NULL));
+	sprintf(buf, "X-SNIF-Diags: l=%hd;e=%lx;c=%hd;d=%hd;t=%llu", cert->tlserr.line, cert->tlserr.code, cert->tlserr.ctxcode, cert->tlserr.ctxdepth, (unsigned long long) time(NULL));
 	hdrs = curl_slist_append(hdrs, buf);
 	cert->tlserr.line = 0;
     }

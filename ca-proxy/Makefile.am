@@ -1,4 +1,4 @@
-bin_SCRIPTS = ../bin/snif-relay bin/snif-certd bin/snif-arc bin/snif-apnsd
+bin_SCRIPTS = ../bin/snif-relay bin/snif-certd bin/snif-arc bin/snif-apnsd bin/snif-syncd
 
 snifd_ca_basedir = /var/lib/snif/ca-proxy
 snifd_ca_base_DATA = README
@@ -27,6 +27,7 @@ install-data-hook:
 	[ -d $(snifd_ca_basedir)/arc ] || mkdir -m 02755 $(snifd_ca_basedir)/arc
 	[ -d $(snifd_ca_basedir)/var ] || mkdir -m 02755 $(snifd_ca_basedir)/var
 	[ -d $(snifd_ca_basedir)/apns ] || mkdir -m 02775 $(snifd_ca_basedir)/apns
+	[ -d $(snifd_ca_basedir)/sync-queue ] || mkdir -m 02775 $(snifd_ca_basedir)/sync-queue
 	[ -p $(snifd_ca_basedir)/var/snif-certd.ctl ] || mkfifo -m 0620 $(snifd_ca_basedir)/var/snif-certd.ctl
 	[ -p $(snifd_ca_basedir)/var/snifd-in.ctl ] || mkfifo -m 0620 $(snifd_ca_basedir)/var/snifd-in.ctl
 	[ -p $(snifd_ca_basedir)/var/snifd-out-apnsd.ctl ] || mkfifo -m 0640 $(snifd_ca_basedir)/var/snifd-out-apnsd.ctl

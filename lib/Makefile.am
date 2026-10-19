@@ -12,4 +12,4 @@ lib_LTLIBRARIES = libsnif.la
 
 libsnif_la_SOURCES = $(LIB_CFILES) $(LIB_HFILES)
 libsnif_la_LIBADD = -lssl -lcrypto -lcurl
-libsnif_la_LDFLAGS = -version-info 0:0:0
+libsnif_la_LDFLAGS = -version-info 0:1:0

@@ -29,7 +29,7 @@
 
 
 int snif_conn_start(char **ctlbuf, int ctllen, const char *hostname) {
-    if (strlen(hostname) > ctllen - 16) return 0;
+    if (ctllen < 16 || strlen(hostname) > (size_t)(ctllen - 16)) return 0;
     sprintf(*ctlbuf, "SNIF LISTEN %s\r\n", hostname);
     int l = strlen(*ctlbuf);
     *ctlbuf += l;
@@ -91,7 +91,7 @@ struct snif_conn *snif_conn_receive_cb(const char **ctlbuf, int ctllen, void *ar
 }
 
 int snif_conn_forward(char **fwdbuf, int fwdlen, struct snif_conn *conn) {
-    if (strlen(conn->connid) > fwdlen - 16) return 0;
+    if (fwdlen < 16 || strlen(conn->connid) > (size_t)(fwdlen - 16)) return 0;
     sprintf(*fwdbuf, "SNIF ACCEPT %s\r\n", conn->connid);
     int l = strlen(*fwdbuf);
     *fwdbuf += l;
@@ -106,7 +106,7 @@ int snif_conn_accept(char **ctlbuf, int ctllen, struct snif_conn *conn) {
 }
 
 int snif_conn_reject(char **ctlbuf, int ctllen, struct snif_conn *conn) {
-    if (strlen(conn->connid) > ctllen - 16) return 0;
+    if (ctllen < 16 || strlen(conn->connid) > (size_t)(ctllen - 16)) return 0;
     sprintf(*ctlbuf, "SNIF CLOSE %s\r\n", conn->connid);
     int l = strlen(*ctlbuf);
     *ctlbuf += l;
@@ -114,7 +114,7 @@ int snif_conn_reject(char **ctlbuf, int ctllen, struct snif_conn *conn) {
 }
 
 int snif_conn_abuse(char **ctlbuf, int ctllen, struct snif_conn *conn, int abuse) {
-    if (strlen(conn->connid) > ctllen - 24) return 0;
+    if (ctllen < 26 || strlen(conn->connid) > (size_t)(ctllen - 26)) return 0;
     sprintf(*ctlbuf, "SNIF ABUSE %s %d\r\n", conn->connid, abuse);
     int l = strlen(*ctlbuf);
     *ctlbuf += l;
@@ -122,7 +122,9 @@ int snif_conn_abuse(char **ctlbuf, int ctllen, struct snif_conn *conn, int abuse
 }
 
 int snif_conn_msg(char **ctlbuf, int ctllen, const char *hostname, const char *msg) {
-    if (!hostname || !msg || strlen(hostname) + strlen(msg) > ctllen - 16) return 0;
+    if (!hostname || !msg || ctllen < 16) return 0;
+    size_t hl = strlen(hostname);
+    if (hl > (size_t)(ctllen - 16) || strlen(msg) > (size_t)(ctllen - 16) - hl) return 0;
     sprintf(*ctlbuf, "SNIF MSG %s %s\r\n", hostname, msg);
     int l = strlen(*ctlbuf);
     *ctlbuf += l;

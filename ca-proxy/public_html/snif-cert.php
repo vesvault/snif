@@ -30,6 +30,8 @@ $CrtPath = "$BasePath/crt";
 $CSRMinSize = 128;
 $CSRMaxSize = 16384;
 
+require_once "$BasePath/inc/snif-cluster.php";
+
 if ($_SERVER['REQUEST_METHOD'] == 'OPTIONS') exit;
 
 # The certificate CN is taken from the request path (/snif-cert/<cn>.csr|.crt)
@@ -60,11 +62,13 @@ $AuthUrl = rtrim($AuthUrl, "/") . "/";
 
 if ($_SERVER['REQUEST_URI'] == "/snif-cert/$Domain.csr") {
     $csr_file = "$CSRPath/$Domain.csr";
-    if (file_exists($csr_file)) {
+    # In a cluster snif-syncd decides: an identical CSR again is accepted, a
+    # different one is refused (doc/cluster.md section 5).
+    if (!snif_cluster_node() && file_exists($csr_file)) {
 	header('HTTP/1.0 403 Forbidden');
 	exit;
     }
-    if ($_SERVER['REQUEST_METHOD'] != 'PUT' || !file_exists("$CfgPath/$Domain.cfg")) {
+    if ($_SERVER['REQUEST_METHOD'] != 'PUT' || !snif_cluster_have("cfg/$Domain.cfg")) {
 	header('HTTP/1.0 404 Not Found');
 	exit;
     }
@@ -73,7 +77,17 @@ if ($_SERVER['REQUEST_URI'] == "/snif-cert/$Domain.csr") {
 	header('HTTP/1.0 400 Bad Request');
 	exit;
     }
-    if (!file_put_contents($csr_file, $csr)) {
+    if (snif_cluster_node()) {
+	$r = snif_cluster_req("CSR $Domain " . strlen($csr) . " " . hash('sha256', $csr), $csr);
+	if ($r === 'DIFFERENT') {
+	    header('HTTP/1.0 403 Forbidden');
+	    exit;
+	}
+	if ($r !== 'STORED' && $r !== 'SAME') {
+	    header('HTTP/1.0 503 Service Unavailable');
+	    exit;
+	}
+    } elseif (!file_put_contents($csr_file, $csr)) {
 	header('HTTP/1.0 502 Bad Gateway');
 	exit;
     }
@@ -91,7 +105,7 @@ if ($_SERVER['REQUEST_URI'] == "/snif-cert/$Domain.csr") {
 	echo file_get_contents($crt_file);
 	exit;
     }
-    if (!file_exists("$CfgPath/$Domain.cfg")) {
+    if (!snif_cluster_have("cfg/$Domain.cfg")) {
 	header('HTTP/1.0 404 Not Found');
 	exit;
     }

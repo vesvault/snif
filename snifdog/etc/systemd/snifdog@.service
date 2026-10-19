@@ -1,0 +1,20 @@
+# One snifdog watcher per configuration in /etc/snif/snifdog.d/:
+#     systemctl enable --now snifdog@vesmail.xyz
+# runs /etc/snif/snifdog.d/vesmail.xyz.conf. Use these instead of the cron.d
+# entry, not alongside it.
+
+[Unit]
+Description=SNIF CA Transparency watchdog for %i (CT SPKI-pin monitor)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=snif
+Group=snif
+Environment=SNIFDOG_CONF=/etc/snif/snifdog.d/%i.conf
+ExecStart=/usr/bin/snifdog watch
+Restart=on-failure
+RestartSec=30
+
+[Install]
+WantedBy=multi-user.target

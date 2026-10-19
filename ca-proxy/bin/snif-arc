@@ -33,6 +33,10 @@ ArcDay=$ArcDir/`date +%Y%m%d`
 
 mkdir -m 0775 $ArcDay 2> /dev/null
 
-find $CertDir/ -name "*.crt" -mtime +75 -exec mv \{\} $ArcDay/ \;
+# crt/<d>.crt of a local-CA base domain (etc/<d>.pub-ca) is the root bundle
+# published at /snif-cert/<d>.crt, not an issued certificate: it stays.
+find $CertDir/ -name "*.crt" -mtime +75 | while read Crt ; do
+    [ -e "$BaseDir/etc/`basename $Crt .crt`.pub-ca" ] || mv $Crt $ArcDay/
+done
 
 rmdir --ignore-fail-on-non-empty $ArcDay

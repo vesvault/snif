@@ -104,6 +104,9 @@ void snif_fifo_pollfn(snif_sock *sock, struct pollfd *pollfd) {
 	    if (!strcmp(cmd2, "CLOSE")) {
 		snif_sock **ppeer = snif_cln_get(connid);
 		if (ppeer && *ppeer) snif_sock_done(*ppeer);
+		snif_host_unhold(connid);
+	    } else if (!strcmp(cmd2, "CLEAR")) {
+		snif_host_unhold(connid);
 	    } else if (!strcmp(cmd2, "ABUSE")) {
 		snif_sock **ppeer = snif_cln_get(connid);
 		if (ppeer && *ppeer) {
@@ -117,7 +120,9 @@ void snif_fifo_pollfn(snif_sock *sock, struct pollfd *pollfd) {
 	    } else if (c >= 4 && !strcmp(cmd2, "CONNECT")) {
 		char *p = strchr(arg, ':');
 		snif_host *host = p ? snif_host_get(arg, p - arg) : NULL;
-		if (host) snif_host_notifyl(host, sock->rd->buf, len);
+		if (host && snif_host_notifyl(host, sock->rd->buf, len) <= 0) {
+		    snif_host_hold(host, connid, sock->rd->buf, len, sock->listen->tmout.cln);
+		}
 	    }
 	}
 	snif_buf_shift(sock->rd, len);

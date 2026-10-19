@@ -54,13 +54,19 @@ use JSON::PP;
 use Sys::Syslog qw(:standard :macros);
 use File::Temp qw(tempfile);
 use File::Path qw(make_path);
+use Fcntl qw(:flock);
 use POSIX qw(strftime);
 
 our $VERSION = '0.1';
 our %C;			# effective config
 our $NewAlerts = 0;	# alerts newly raised in this pass (drives exit code)
 
-my $DEFAULT_CONF = $ENV{SNIFDOG_CONF} || '/etc/snif/snifdog.conf';
+# The single configuration of a one-base install. Any other configuration,
+# normally one per base domain in /etc/snif/snifdog.d/, defaults to a state
+# directory of its own (load_conf).
+my $LEGACY_CONF = '/etc/snif/snifdog.conf';
+my $STATE_ROOT = '/var/lib/snif/snifdog';
+my $DEFAULT_CONF = $ENV{SNIFDOG_CONF} || $LEGACY_CONF;
 
 #___________________________________________________________________ config
 
@@ -83,10 +89,20 @@ sub load_conf {
 	$cfg{$1} = $2;
     }
 
-    my $dir = $cfg{SNIFDOG_DIR} || '/var/lib/snif/snifdog';
+    my $base = $cfg{SNIFDOG_BASE} || 'snif.xyz';
+    die "snifdog: SNIFDOG_BASE '$base' is not a domain name\n"
+	unless $base =~ /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/i;
+    # The CT cursors and the backfill marker under var/ belong to one base's
+    # query but are not named by it, so two bases sharing a state directory
+    # would share them, and one base would silently skip certificates. Any
+    # configuration but the legacy one therefore defaults to a directory of
+    # its own, and state_claim() refuses a directory another base owns.
+    my $dir = $cfg{SNIFDOG_DIR}
+	|| ($path eq $LEGACY_CONF ? $STATE_ROOT : "$STATE_ROOT/" . lc $base);
     %C = (
+	conf         => $path,
 	dir          => $dir,
-	base         => $cfg{SNIFDOG_BASE}   || 'snif.xyz',
+	base         => $base,
 	source       => $cfg{SNIFDOG_SOURCE} || 'certspotter',
 	mode         => $cfg{SNIFDOG_MODE}   || 'watch',
 	pins_dir     => $cfg{SNIFDOG_PINS_DIR}     || "$dir/pins",
@@ -390,6 +406,42 @@ sub pin_add {
     $rec->{pins}{$spki} = { %meta };
     pin_save($rec);
     return ($status, $rec);
+}
+
+#___________________________________________________________________ state dir
+
+# One pass at a time per state directory, and one base per state directory.
+# The lock is held until the process exits; `watch` holds it for its lifetime,
+# so a cron pass on the same configuration skips. Returns (1) on success, or
+# (0, reason, busy) where busy means another pass holds the lock.
+our $StateLock;
+sub state_claim {
+    make_path($C{var_dir}) unless -d $C{var_dir};
+    my $lf = "$C{var_dir}/lock";
+    open($StateLock, '>>', $lf) or return (0, "cannot open $lf: $!", 0);
+    flock($StateLock, LOCK_EX | LOCK_NB)
+	or return (0, "another snifdog pass is using $C{dir}", 1);
+    my $bf = "$C{var_dir}/base";
+    if (open my $fh, '<', $bf) {
+	my $owner = <$fh> // '';
+	close $fh;
+	$owner =~ s/\s+\z//;
+	return (0, "state directory $C{dir} belongs to $owner, not $C{base}", 0)
+	    if lc $owner ne lc $C{base};
+	return (1);
+    }
+    # No owner yet: a new directory, or one from before this check. Adopt it
+    # only if every pin in it is for this base, so an older one-base directory
+    # is taken over by its own base and by no other.
+    for my $rec (pin_all()) {
+	return (0, "state directory $C{dir} holds a pin outside $C{base} ($rec->{name})", 0)
+	    unless in_base($rec->{name});
+    }
+    open my $wh, '>', "$bf+" or return (0, "cannot write $bf: $!", 0);
+    print $wh "$C{base}\n";
+    close $wh or return (0, "cannot write $bf: $!", 0);
+    rename "$bf+", $bf or return (0, "cannot write $bf: $!", 0);
+    return (1);
 }
 
 #___________________________________________________________________ cursor
@@ -892,6 +944,9 @@ usage:
   snifdog help            this text
 
 config: $DEFAULT_CONF   (override with \$SNIFDOG_CONF)
+        one configuration per base domain: /etc/snif/snifdog.d/<base>.conf
+state:  SNIFDOG_DIR, by default $STATE_ROOT for $LEGACY_CONF
+        and $STATE_ROOT/<base> for any other configuration
 EOF
     return 0;
 }
@@ -902,6 +957,24 @@ sub main {
     my $cmd = shift @ARGV // 'help';
     load_conf($DEFAULT_CONF);
     openlog('snifdog', 'pid', LOG_DAEMON) if use_syslog();
+
+    # Every command that writes state holds the state directory for its run.
+    if ($cmd eq 'pin' || $cmd eq 'poll' || $cmd eq 'watch') {
+	my ($ok, $why, $busy) = state_claim();
+	if (!$ok) {
+	    if ($busy && $cmd eq 'poll') {
+		# The previous pass on this configuration is still running (a
+		# first backfill can outlast the cron interval). Not an error,
+		# and not worth a cron mail, so nothing on stderr.
+		syslog(LOG_INFO, '%s', "poll skipped: $why") if use_syslog();
+		closelog() if use_syslog();
+		return 0;
+	    }
+	    say_log('ERROR', $why);
+	    closelog() if use_syslog();
+	    return $busy ? 75 : 78;
+	}
+    }
 
     my $rc = 0;
     if    ($cmd eq 'pin')  { $rc = cmd_pin(@ARGV) }

@@ -1,0 +1,55 @@
+#!/bin/sh
+
+#/**************************************************************************
+# *     _________
+# *    /````````_\                  S N I F ~ e2e TLS trust for IoT
+# *   /\     , / O\      ___
+# *  | |     | \__|_____/  o\       e2e TLS SNI Forwarder
+# *  | |     |  ``/`````\___/       e2e TLS CA Proxy
+# *  | |     | . | <"""""""~~
+# *  |  \___/ ``  \________/        https://snif.host
+# *   \  '''  ``` /````````         (C) 2021-2026 VESvault Corp
+# *    \_________/                  Jim Zubov <jz@vesvault.com>
+# *
+# *
+# * Apache License, Version 2.0
+# * You may use, copy, modify, merge, publish, distribute and/or sell copies
+# * of the Software under the terms of the Apache License, Version 2.0, a copy
+# * of which is provided in the COPYING file, or http://www.apache.org/licenses/LICENSE-2.0
+# *
+# * This software is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR
+# * CONDITIONS OF ANY KIND, either express or implied.
+# *
+# **************************************************************************/
+
+# snif-tunnel <peer>: carry this relay's pushes (var/snifd-out-peer-<peer>.ctl)
+# to a peer node of the cluster (doc/cluster.md section 3). Run by
+# snif-tunnel@<peer>.service, which restarts it whenever it exits. On the peer,
+# this key's authorized_keys line is:
+#   restrict,command="cat > <SNIF_CA_PROXY>/var/snifd-in-peer-<this node>.ctl"
+# SNIF_CLUSTER_TUNNEL_CMD overrides the command (%a the peer's address, %p its
+# name, %n this node's name).
+
+for f in /etc/snif/snif.conf /etc/snif.conf; do
+    [ -r $f ] && . $f && break
+done
+
+PEER=$1
+ADDR=
+for p in $SNIF_CLUSTER_PEERS; do
+    case "$p" in
+	"$PEER="*) ADDR=${p#*=} ;;
+    esac
+done
+if [ -z "$PEER" ] || [ -z "$ADDR" ]; then
+    echo "snif-tunnel: '$PEER' is not in SNIF_CLUSTER_PEERS" >&2
+    exit 1
+fi
+
+FIFO=$SNIF_CA_PROXY/var/snifd-out-peer-$PEER.ctl
+CMD=${SNIF_CLUSTER_TUNNEL_CMD:-ssh -o BatchMode=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=3 snif-peer@%a}
+CMD=$(printf '%s' "$CMD" | sed "s|%a|$ADDR|g; s|%p|$PEER|g; s|%n|$SNIF_CLUSTER_NODE|g")
+
+# Opening the FIFO blocks until snifd opens it for writing; when snifd or the
+# peer goes away, the pipe breaks and the unit starts this again.
+exec sh -c "$CMD" < "$FIFO"

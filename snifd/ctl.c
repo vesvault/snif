@@ -87,6 +87,7 @@ void snif_ctl_sethost(snif_sock *sock, const char *hostname, int len) {
 	    snif_cln_notify(cln, ntfy);
 	    if (snif_ctl_out(sock, ntfy, strlen(ntfy)) <= 0) break;
 	}
+	snif_host_sendheld(h, sock);
 	if (sock->listen->push) {
 	    char rhost[64];
 	    char rport[16];

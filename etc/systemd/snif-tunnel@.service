@@ -1,0 +1,13 @@
+[Unit]
+Description=SNIF relay FIFO tunnel to cluster peer %i (doc/cluster.md)
+After=snif-relay.service
+
+[Service]
+User=snif
+Group=snif
+ExecStart=/usr/bin/snif-tunnel %i
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target
