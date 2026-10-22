@@ -1,5 +1,77 @@
 snif NEWS -- history of user-visible changes
 
+Version 1.08
+------------
+
+* libsnif: snif_cert_reset() freed the root store libsnif had made but
+  left .rootstore pointing at it. snif_cert_init_ex() on the same struct
+  then kept the freed store, and so did snifd's own control connection
+  restart, which resets the struct and uses it again; the next
+  verification used freed memory. Reset now clears .rootstore, and a new
+  store is made from the default paths at init or on the next use. A
+  root store the caller set is left as set.
+
+* libsnif: a certificate chain loaded from .certfile was used without
+  being verified. It is now verified as a downloaded one is: against
+  .rootstore, the private key and the CN; its expiry is still judged by
+  snif_cert_ctx(), which renews ahead of it. A chain that fails is
+  refused (SNIF_CE_CERT), and a new certificate is downloaded within
+  SNIF_CERT_RETRY seconds; its CN still names the host to renew.
+  A snifd connector whose certificate comes from a root outside the
+  system's default paths needs that root in SSL_CERT_FILE or
+  SSL_CERT_DIR, as renewals already did. No interface change; the
+  libtool version is 0:2:0.
+
+* install: the ca-proxy install stopped on a fresh host at the chown of
+  /var/log/snif, which nothing had made, before the code, the runtime
+  directories, the pipes and the units. It now completes, and runs mkdirs,
+  which makes crt/ and each cluster peer's pipes and queue as well.
+
+* install: installing the CA proxy again replaced etc/snif.xyz.tsig and
+  etc/snif.snif.xyz.domains with the placeholders. Example files in etc/
+  are now copied only where absent; snif.conf already was. snifdog's
+  example configuration and cron.d entry go in only on a first install,
+  so a configuration moved into snifdog.d, or a cron entry removed for the
+  watch units, is not brought back.
+
+* install: snif-relay and snif-tunnel moved to ca-proxy/bin/, beside
+  their units, and are installed by the ca-proxy install only. Both run
+  against the CA proxy tree's pipes. The top-level `make install` is
+  libsnif, snifd and snif-conn with its unit; it installed snif-relay and
+  snif-tunnel on connector hosts too, and the ca-proxy install installed
+  snif-relay a second time. A relay host runs `make install`, then the
+  ca-proxy install, as before.
+
+* install: the snif user is a system user with no login and home
+  /var/lib/snif, made by any of the three installs, run as root, when it
+  does not exist. An existing snif user is left as it is.
+
+* install: every hook honours DESTDIR. Only a root install without
+  DESTDIR makes the user, chowns to it, puts units in the system and
+  reloads systemd, so an unprivileged install, such as Homebrew's, works
+  as before. Code directories of the CA proxy
+  that the tree links elsewhere are left alone. ca-proxy/mkdirs leaves
+  what exists, takes the base dir as an argument, and run as root gives
+  what it makes to snif.
+
+* ca-proxy: snif-certd, snif-apnsd and snif-arc read only /etc/snif.conf,
+  while the install and snif-relay use /etc/snif/snif.conf, so on a host
+  with only the latter they ran with no CA proxy tree. They
+  now read /etc/snif/snif.conf, else /etc/snif.conf, as snif-syncd does.
+  snif-arc takes SNIF_CA_PROXY from the environment like the daemons,
+  and refuses to run without a tree instead of making /arc.
+
+* ca-proxy: the install adds /etc/cron.d/snif-arc, daily, where absent.
+  snif-arc's archiving is what lets a certificate renew, and nothing
+  scheduled it. It also adds /etc/logrotate.d/snif for log_snif-certd,
+  log_snif-apnsd and log_snif-syncd, which grew without limit; not for
+  log/<domain>.log, whose modification time is snif-certd's retry
+  throttle.
+
+* units: all wait for network-online.target; the relay, snif-certd,
+  snif-apnsd and the connector restart on failure; the relay-side daemons
+  run with NoNewPrivileges.
+
 Version 1.07
 ------------
 

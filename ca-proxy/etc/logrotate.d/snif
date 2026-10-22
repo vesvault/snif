@@ -1,0 +1,15 @@
+# The SNIF CA proxy daemons' logs. Not the per-domain <domain>.log files
+# beside them: snif-certd reads their modification time as its one-hour
+# retry throttle, which a rotation would reset. Installed by the ca-proxy
+# install where absent.
+
+/var/log/snif/log_snif-certd /var/log/snif/log_snif-apnsd /var/log/snif/log_snif-syncd {
+    su snif snif
+    weekly
+    rotate 8
+    compress
+    delaycompress
+    missingok
+    notifempty
+    copytruncate
+}

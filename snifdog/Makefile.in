@@ -96,8 +96,8 @@ am__configure_deps = $(am__aclocal_m4_deps) $(CONFIGURE_DEPENDENCIES) \
 	$(ACLOCAL_M4)
 DIST_COMMON = $(srcdir)/Makefile.am $(top_srcdir)/configure \
 	$(am__configure_deps) $(dist_bin_SCRIPTS) \
-	$(dist_snifdog_base_DATA) $(dist_snifdog_etc_DATA) \
-	$(dist_snifdoglib_DATA) $(am__DIST_COMMON)
+	$(dist_snifdog_base_DATA) $(dist_snifdoglib_DATA) \
+	$(am__DIST_COMMON)
 am__CONFIG_DISTCLEAN_FILES = config.status config.cache config.log \
  configure.lineno config.status.lineno
 mkinstalldirs = $(install_sh) -d
@@ -130,8 +130,7 @@ am__uninstall_files_from_dir = { \
        $(am__cd) "$$dir" && echo $$files | $(am__xargs_n) 40 $(am__rm_f); }; \
   }
 am__installdirs = "$(DESTDIR)$(bindir)" "$(DESTDIR)$(man8dir)" \
-	"$(DESTDIR)$(snifdog_basedir)" "$(DESTDIR)$(snifdog_etcdir)" \
-	"$(DESTDIR)$(snifdoglibdir)"
+	"$(DESTDIR)$(snifdog_basedir)" "$(DESTDIR)$(snifdoglibdir)"
 SCRIPTS = $(dist_bin_SCRIPTS)
 AM_V_P = $(am__v_P_@AM_V@)
 am__v_P_ = $(am__v_P_@AM_DEFAULT_V@)
@@ -155,8 +154,7 @@ am__can_run_installinfo = \
 man8dir = $(mandir)/man8
 NROFF = nroff
 MANS = $(dist_man_MANS)
-DATA = $(dist_snifdog_base_DATA) $(dist_snifdog_etc_DATA) \
-	$(dist_snifdoglib_DATA)
+DATA = $(dist_snifdog_base_DATA) $(dist_snifdoglib_DATA)
 am__tagged_files = $(HEADERS) $(SOURCES) $(TAGS_FILES) $(LISP)
 am__DIST_COMMON = $(dist_man_MANS) $(srcdir)/Makefile.in \
 	$(top_srcdir)/../build-aux/install-sh \
@@ -270,12 +268,23 @@ dist_man_MANS = snifdog.8
 snifdoglibdir = /usr/share/snifdog/lib/Snif/CT
 dist_snifdoglib_DATA = lib/Snif/CT/CertSpotter.pm lib/Snif/CT/CrtSh.pm
 snifdog_etcdir = /etc/snif
-dist_snifdog_etc_DATA = etc/snifdog.conf
 snifdog_basedir = /var/lib/snif/snifdog
 dist_snifdog_base_DATA = README
-EXTRA_DIST = DESIGN.md etc/systemd/snifdog.service etc/systemd/snifdog@.service \
+systemdunitdir = /lib/systemd/system
+crondir = /etc/cron.d
+EXTRA_DIST = DESIGN.md etc/snifdog.conf etc/systemd/snifdog.service etc/systemd/snifdog@.service \
 	etc/cron.d/snifdog mkdirs test/state.t
 
+
+# The state directories and the units are made or replaced. The example
+# snifdog.conf and the cron.d entry go in only on a first install, when no
+# configuration exists: an operator who moved snifdog.conf into snifdog.d,
+# or chose the watch units and removed the cron entry, keeps that choice.
+# Only a root install without DESTDIR makes the snif user, chowns to it and
+# reloads systemd. A staged (DESTDIR) install, e.g. for a package, gets
+# everything else.
+ROOT_INSTALL = [ -z "$(DESTDIR)" ] && [ "$$(id -u)" = 0 ]
+SNIF_OWNS = $(ROOT_INSTALL) && id -u snif >/dev/null 2>&1
 all: all-am
 
 .SUFFIXES:
@@ -411,27 +420,6 @@ uninstall-dist_snifdog_baseDATA:
 	@list='$(dist_snifdog_base_DATA)'; test -n "$(snifdog_basedir)" || list=; \
 	files=`for p in $$list; do echo $$p; done | sed -e 's|^.*/||'`; \
 	dir='$(DESTDIR)$(snifdog_basedir)'; $(am__uninstall_files_from_dir)
-install-dist_snifdog_etcDATA: $(dist_snifdog_etc_DATA)
-	@$(NORMAL_INSTALL)
-	@list='$(dist_snifdog_etc_DATA)'; test -n "$(snifdog_etcdir)" || list=; \
-	if test -n "$$list"; then \
-	  echo " $(MKDIR_P) '$(DESTDIR)$(snifdog_etcdir)'"; \
-	  $(MKDIR_P) "$(DESTDIR)$(snifdog_etcdir)" || exit 1; \
-	fi; \
-	for p in $$list; do \
-	  if test -f "$$p"; then d=; else d="$(srcdir)/"; fi; \
-	  echo "$$d$$p"; \
-	done | $(am__base_list) | \
-	while read files; do \
-	  echo " $(INSTALL_DATA) $$files '$(DESTDIR)$(snifdog_etcdir)'"; \
-	  $(INSTALL_DATA) $$files "$(DESTDIR)$(snifdog_etcdir)" || exit $$?; \
-	done
-
-uninstall-dist_snifdog_etcDATA:
-	@$(NORMAL_UNINSTALL)
-	@list='$(dist_snifdog_etc_DATA)'; test -n "$(snifdog_etcdir)" || list=; \
-	files=`for p in $$list; do echo $$p; done | sed -e 's|^.*/||'`; \
-	dir='$(DESTDIR)$(snifdog_etcdir)'; $(am__uninstall_files_from_dir)
 install-dist_snifdoglibDATA: $(dist_snifdoglib_DATA)
 	@$(NORMAL_INSTALL)
 	@list='$(dist_snifdoglib_DATA)'; test -n "$(snifdoglibdir)" || list=; \
@@ -635,7 +623,7 @@ check-am: all-am
 check: check-am
 all-am: Makefile $(SCRIPTS) $(MANS) $(DATA)
 installdirs:
-	for dir in "$(DESTDIR)$(bindir)" "$(DESTDIR)$(man8dir)" "$(DESTDIR)$(snifdog_basedir)" "$(DESTDIR)$(snifdog_etcdir)" "$(DESTDIR)$(snifdoglibdir)"; do \
+	for dir in "$(DESTDIR)$(bindir)" "$(DESTDIR)$(man8dir)" "$(DESTDIR)$(snifdog_basedir)" "$(DESTDIR)$(snifdoglibdir)"; do \
 	  test -z "$$dir" || $(MKDIR_P) "$$dir"; \
 	done
 install: install-am
@@ -690,8 +678,7 @@ info: info-am
 info-am:
 
 install-data-am: install-dist_snifdog_baseDATA \
-	install-dist_snifdog_etcDATA install-dist_snifdoglibDATA \
-	install-man
+	install-dist_snifdoglibDATA install-man
 	@$(NORMAL_INSTALL)
 	$(MAKE) $(AM_MAKEFLAGS) install-data-hook
 install-dvi: install-dvi-am
@@ -739,8 +726,8 @@ ps: ps-am
 ps-am:
 
 uninstall-am: uninstall-dist_binSCRIPTS \
-	uninstall-dist_snifdog_baseDATA uninstall-dist_snifdog_etcDATA \
-	uninstall-dist_snifdoglibDATA uninstall-man
+	uninstall-dist_snifdog_baseDATA uninstall-dist_snifdoglibDATA \
+	uninstall-man
 
 uninstall-man: uninstall-man8
 
@@ -753,30 +740,47 @@ uninstall-man: uninstall-man8
 	distuninstallcheck dvi dvi-am html html-am info info-am \
 	install install-am install-data install-data-am \
 	install-data-hook install-dist_binSCRIPTS \
-	install-dist_snifdog_baseDATA install-dist_snifdog_etcDATA \
-	install-dist_snifdoglibDATA install-dvi install-dvi-am \
-	install-exec install-exec-am install-html install-html-am \
-	install-info install-info-am install-man install-man8 \
-	install-pdf install-pdf-am install-ps install-ps-am \
-	install-strip installcheck installcheck-am installdirs \
-	maintainer-clean maintainer-clean-generic mostlyclean \
-	mostlyclean-generic pdf pdf-am ps ps-am tags-am uninstall \
-	uninstall-am uninstall-dist_binSCRIPTS \
-	uninstall-dist_snifdog_baseDATA uninstall-dist_snifdog_etcDATA \
-	uninstall-dist_snifdoglibDATA uninstall-man uninstall-man8
+	install-dist_snifdog_baseDATA install-dist_snifdoglibDATA \
+	install-dvi install-dvi-am install-exec install-exec-am \
+	install-html install-html-am install-info install-info-am \
+	install-man install-man8 install-pdf install-pdf-am install-ps \
+	install-ps-am install-strip installcheck installcheck-am \
+	installdirs maintainer-clean maintainer-clean-generic \
+	mostlyclean mostlyclean-generic pdf pdf-am ps ps-am tags-am \
+	uninstall uninstall-am uninstall-dist_binSCRIPTS \
+	uninstall-dist_snifdog_baseDATA uninstall-dist_snifdoglibDATA \
+	uninstall-man uninstall-man8
 
 .PRECIOUS: Makefile
 
 
 install-data-hook:
-	[ -d $(snifdog_etcdir)/snifdog.d ] || mkdir -m 0755 $(snifdog_etcdir)/snifdog.d
-	[ -d $(snifdog_basedir) ] || mkdir -m 02775 $(snifdog_basedir)
-	[ -d $(snifdog_basedir)/pins ] || mkdir -m 02775 $(snifdog_basedir)/pins
-	[ -d $(snifdog_basedir)/var ] || mkdir -m 02755 $(snifdog_basedir)/var
-	[ -d $(snifdog_basedir)/evidence ] || mkdir -m 02755 $(snifdog_basedir)/evidence
-	( id -u snif >/dev/null 2>&1 ) && chown -R snif:snif $(snifdog_basedir) || true
-	[ -d /lib/systemd/system ] && cp etc/systemd/snifdog.service etc/systemd/snifdog@.service /lib/systemd/system || true
-	[ -d /etc/cron.d ] && cp etc/cron.d/snifdog /etc/cron.d/snifdog || true
+	if $(ROOT_INSTALL) && ! id -u snif >/dev/null 2>&1; then \
+	    if command -v useradd >/dev/null; then \
+		useradd -r -M -d /var/lib/snif -s "$$(command -v nologin || echo /bin/false)" \
+		    $$(getent group snif >/dev/null && echo '-g snif' || echo -U) snif; \
+	    else echo "No useradd here: make the snif user and group by hand." >&2; fi; \
+	fi
+	if [ ! -e "$(DESTDIR)$(snifdog_etcdir)/snifdog.conf" ] && \
+	    ! ls "$(DESTDIR)$(snifdog_etcdir)"/snifdog.d/*.conf >/dev/null 2>&1; then \
+	    $(MKDIR_P) "$(DESTDIR)$(snifdog_etcdir)" && \
+	    $(INSTALL_DATA) $(srcdir)/etc/snifdog.conf "$(DESTDIR)$(snifdog_etcdir)/" && \
+	    if [ -n "$(DESTDIR)" ] || [ -d $(crondir) ]; then \
+		$(MKDIR_P) "$(DESTDIR)$(crondir)" && \
+		$(INSTALL_DATA) $(srcdir)/etc/cron.d/snifdog "$(DESTDIR)$(crondir)/"; \
+	    fi; \
+	fi
+	[ -d "$(DESTDIR)$(snifdog_etcdir)/snifdog.d" ] || mkdir -m 0755 "$(DESTDIR)$(snifdog_etcdir)/snifdog.d"
+	[ -d "$(DESTDIR)$(snifdog_basedir)/pins" ] || mkdir -m 02775 "$(DESTDIR)$(snifdog_basedir)/pins"
+	[ -d "$(DESTDIR)$(snifdog_basedir)/var" ] || mkdir -m 02755 "$(DESTDIR)$(snifdog_basedir)/var"
+	[ -d "$(DESTDIR)$(snifdog_basedir)/evidence" ] || mkdir -m 02755 "$(DESTDIR)$(snifdog_basedir)/evidence"
+	chmod 02775 "$(DESTDIR)$(snifdog_basedir)"
+	if $(SNIF_OWNS); then chown -R snif:snif $(snifdog_basedir); fi
+	if [ -n "$(DESTDIR)" ] || [ -d $(systemdunitdir) ]; then \
+	    $(MKDIR_P) "$(DESTDIR)$(systemdunitdir)" && \
+	    $(INSTALL_DATA) $(srcdir)/etc/systemd/snifdog.service $(srcdir)/etc/systemd/snifdog@.service "$(DESTDIR)$(systemdunitdir)/"; \
+	fi
+	if $(ROOT_INSTALL) && [ -d /run/systemd/system ]; then systemctl daemon-reload || true; fi
 
 # Tell versions [3.59,3.63) of GNU make to not export all variables.
 # Otherwise a system limit (for SysV at least) may be exceeded.

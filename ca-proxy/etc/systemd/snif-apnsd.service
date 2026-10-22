@@ -1,10 +1,15 @@
 [Unit]
 Description=SNIF APNS Sender for connectors running on iOS devices
+After=network-online.target
+Wants=network-online.target
 
 [Service]
 User=snif
 Group=snif
+NoNewPrivileges=yes
 ExecStart=/usr/bin/snif-apnsd
+Restart=on-failure
+RestartSec=5
 
 [Install]
 WantedBy=multi-user.target

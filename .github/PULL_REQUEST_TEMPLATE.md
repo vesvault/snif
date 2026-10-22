@@ -7,7 +7,7 @@
 ## Component(s)
 
 - [ ] Connector (`lib/`, `snifd/`, `bin/snif-conn`)
-- [ ] Relay (`snifd` relay, `bin/snif-relay`)
+- [ ] Relay (`snifd` relay, `ca-proxy/bin/snif-relay`)
 - [ ] CA proxy (`ca-proxy/`)
 - [ ] Docs / build / CI
 

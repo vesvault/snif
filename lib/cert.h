@@ -38,6 +38,11 @@
  *               NULL for default
  *   .ctxfn    - SSL_CTX initialization callback for curl,
                  NULL for default
+ *   .rootstore - X509_STORE * of the trusted roots, for the CA proxy's HTTPS
+ *               and for every certificate chain, downloaded or loaded from
+ *               .certfile. NULL for the default paths: libsnif makes a store
+ *               and snif_cert_reset() frees it. A store set here is the
+ *               caller's, and stays set across snif_cert_reset().
  *
  * The trailing .keyspec / .ca_keyspec fields are only accessed when the
  * SNIF_F_KEYSPEC flag is passed to snif_cert_init_ex() - see SNIF_F_KEYSPEC.
@@ -223,6 +228,10 @@ void *snif_cert_pkey(struct snif_cert *cert);
 /**************************************************************************
  * Get a validated SSL_CTX * for the current cert, go through the cert
  * issuance or renewal if none exists yet.
+ * A chain loaded from .certfile is verified against .rootstore, the private
+ * key and the CN, as a downloaded one is. A chain that fails is refused:
+ * NULL with SNIF_CE_CERT, and a new certificate is downloaded within
+ * SNIF_CERT_RETRY seconds.
  * If NULL is returned - check snif_cert_authurl(cert)
  * Do not deallocate.
  **************************************************************************/
@@ -265,7 +274,9 @@ void *snif_cert_ssl(struct snif_cert *cert);
 
 /**************************************************************************
  * Deallocate all dynamic fields in snif_cert, call when done with the SNIF
- * session.
+ * session. The root store libsnif made is freed and .rootstore set to NULL,
+ * so the struct can be initialized again with snif_cert_init_ex(), or used
+ * again as it is: a new store is then made from the default paths.
  **************************************************************************/
 void snif_cert_reset(struct snif_cert *cert);
 

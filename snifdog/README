@@ -174,16 +174,21 @@ INSTALL / RUN
       cd snifdog && ./configure && make install
 
   That installs bin/snifdog -> /usr/bin, the snifdog.8 man page, the lib/Snif/CT
-  adapters -> /usr/share/snifdog/lib, etc/snifdog.conf -> /etc/snif/, the systemd
-  unit and the cron.d example, and creates /var/lib/snif/snifdog/{pins,var,evidence}. It
-  does not pull in the Perl runtime dependencies (see REQUIREMENTS) -- install
-  those from your distro, e.g. on Debian/Ubuntu:
+  adapters -> /usr/share/snifdog/lib and the systemd units, makes the snif user
+  if it does not exist, and creates /var/lib/snif/snifdog/{pins,var,evidence}.
+  On a first install only, when /etc/snif has no snifdog.conf and snifdog.d has
+  no configuration, it also installs etc/snifdog.conf -> /etc/snif/ and the
+  cron.d entry -> /etc/cron.d/snifdog. Installing again leaves both alone, so a
+  configuration moved into snifdog.d, or a cron entry removed for the watch
+  units, stays that way. It does not pull in the Perl runtime dependencies
+  (see REQUIREMENTS) -- install those from your distro, e.g. on Debian/Ubuntu:
 
       apt install libwww-perl liblwp-protocol-https-perl
 
-  Then either enable the systemd unit (snifdog watch) or the cron.d entry
-  (snifdog poll every 15 min) -- not both. Edit /etc/snif/snifdog.conf first
-  (SNIFDOG_BASE, SNIFDOG_MODE, sinks).
+  Then use either the systemd unit (snifdog watch) or the cron.d entry
+  (snifdog poll every 15 min) -- not both. The cron.d entry runs as soon as it
+  is installed: to use the units, remove /etc/cron.d/snifdog. Edit
+  /etc/snif/snifdog.conf first (SNIFDOG_BASE, SNIFDOG_MODE, sinks).
 
   One configuration watches one base domain. To watch several, put one file
   per base in /etc/snif/snifdog.d/, e.g. snif.xyz.conf and vesmail.xyz.conf.

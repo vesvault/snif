@@ -226,7 +226,10 @@ and end-to-end TLS setups.
 To integrate SNIF directly instead of running `snif-conn`:
 
 - Use [`lib/cert.h`](lib/cert.h) to allocate the SNIF hostname, generate the
-  private key, and issue and renew the certificate.
+  private key, and issue and renew the certificate. Every chain, downloaded or
+  loaded from the certificate file, is verified against `snif_cert.rootstore`,
+  the system's default roots unless you set one: set it when the base domain
+  issues from a private root.
 - The key algorithm defaults to RSA, and can be set with `snifd -K` (or
   `SNIF_CONN_KEYALGO` in `snif.conf`, or `snif_cert.keyspec` when embedding):
   `RSA[:bits]`, `EC[:curve]` (e.g. `EC:P-256`), `ED25519`, or `ED448`. When
@@ -250,6 +253,10 @@ CA proxy — is Apache-2.0.
   relay stack and a `docker compose` file.
 - **From source:** [`ca-proxy/README`](ca-proxy/README) — the underlying setup,
   including DNS-01 / wildcard issuance and the optional APNS wake-up daemon.
+  `sudo make install` here (snifd and libsnif), then `sudo make install` in
+  `ca-proxy/` (the relay: `snif-relay`, `snif-tunnel` and the CA proxy),
+  makes the `snif` user, the CA proxy tree, its directories and pipes, and
+  the units; installing again keeps the configuration and state.
 
 
 ## Contents
@@ -257,7 +264,7 @@ CA proxy — is Apache-2.0.
 ```
 lib/        SNIF connector libraries (libsnif) source
 snifd/      SNIF daemon source — relay and connector
-ca-proxy/   CA proxy scripts and web API
+ca-proxy/   Relay scripts, CA proxy daemons and web API
 snifdog/    CA Transparency watchdog — standalone sub-package
 ```
 

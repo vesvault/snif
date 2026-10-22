@@ -70,7 +70,7 @@ RUN groupadd -g 909 snif \
 
 # snifd binary + the relay wrapper + the license.
 COPY --from=build /src/snifd/snifd /usr/bin/snifd
-COPY --from=build /src/bin/snif-relay /usr/bin/snif-relay
+COPY --from=build /src/ca-proxy/bin/snif-relay /usr/bin/snif-relay
 COPY --from=build /src/COPYING /src/NOTICE /usr/share/licenses/snif/
 
 # CA proxy code + the issuance daemons, staged read-only in the image. The

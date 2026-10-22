@@ -1,12 +1,18 @@
 [Unit]
 Description=SNIF Relay
+# snifd binds every address its -s name resolves to, and does not start if a bind fails.
+After=network-online.target
+Wants=network-online.target
 
 [Service]
 User=snif
 Group=snif
 AmbientCapabilities=CAP_NET_BIND_SERVICE
+NoNewPrivileges=yes
 LimitNOFILE=1048576
 ExecStart=/usr/bin/snif-relay
+Restart=on-failure
+RestartSec=5
 
 [Install]
 WantedBy=multi-user.target

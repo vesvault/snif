@@ -1,0 +1,8 @@
+# snif-arc -- archive the SNIF certificates older than 75 days, so that
+# snif-certd issues a fresh one the next time the connector asks
+# (ca-proxy/README). It runs on every relay node; a run with nothing to
+# archive does nothing. Installed by the ca-proxy install where absent.
+
+MAILTO=root
+
+17 4 * * *  snif  /usr/bin/snif-arc

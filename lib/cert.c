@@ -127,12 +127,25 @@ static size_t snif_cert_curlsendfn(void *ptr, size_t size, size_t nmemb, void *s
     return len;
 }
 
+/**************************************************************************
+ * The caller's root store, or one made here from the default paths. After
+ * snif_cert_reset() freed the one made here, the next use makes a new one.
+ **************************************************************************/
+static X509_STORE *snif_cert_rootstore(snif_cert *cert) {
+    if (!cert->rootstore) {
+	cert->rootstore = cert->alloc_rootstore = X509_STORE_new();
+	if (cert->rootstore) X509_STORE_set_default_paths(cert->rootstore);
+    }
+    return cert->rootstore;
+}
+
 static CURLcode snif_cert_curlctxfn(CURL *curl, void *sslctx, void *parm) {
     snif_cert *cert = parm;
+    X509_STORE *rootstore = snif_cert_rootstore(cert);
 #if	(OPENSSL_VERSION_NUMBER >= 0x10002000L)
-    if (cert->rootstore) SSL_CTX_set1_verify_cert_store(sslctx, cert->rootstore);
+    if (rootstore) SSL_CTX_set1_verify_cert_store(sslctx, rootstore);
 #else
-    if (cert->rootstore) SSL_CTX_set_cert_store(sslctx, cert->rootstore);
+    if (rootstore) SSL_CTX_set_cert_store(sslctx, rootstore);
 #endif
     if (cert->ctxfn) cert->ctxfn(sslctx);
     return CURLE_OK;
@@ -236,9 +249,39 @@ static int snif_cert_setsubj(snif_cert *cert, X509_NAME *subj) {
 #define	snif_cert_sslmethod()		TLSv1_2_server_method()
 #endif
 
-static int snif_cert_verify_chain(snif_cert *cert, BIO *in) {
+static char *snif_cert_setcn(snif_cert *cert, X509 *crt) {
+    int cl;
+    const char *cn = snif_cert_getcn(crt, &cl);
+    if (!cn || !(cert->cn = malloc(cl + 1))) return NULL;
+    memcpy(cert->cn, cn, cl);
+    cert->cn[cl] = 0;
+    return cert->cn;
+}
+
+/**************************************************************************
+ * Verify a PEM chain, the certificate first, against the root store, the
+ * private key and cert->cn. On success the chain is left in cert->dl_ctx.
+ * saved: the chain was read from cert->certfile. Its certificate sets
+ * cert->cn and cert->download_at even when the chain is refused, so that a
+ * renewal can be asked for, as for the self-signed placeholder written
+ * while the first certificate is issued. Its validity period is left to
+ * snif_cert_ctx(), which renews ahead of the expiry.
+ **************************************************************************/
+static int snif_cert_verify_chain(snif_cert *cert, BIO *in, int saved) {
     X509 *crt = PEM_read_bio_X509(in, NULL, NULL, NULL);
     if (!crt) return (snif_cert_TLSERR(cert), 0);
+#if	(OPENSSL_VERSION_NUMBER >= 0x10100000L)
+    time_t exp = snif_cert_asn1time(X509_get0_notAfter(crt));
+#else
+    time_t exp = snif_cert_asn1time(X509_get_notAfter(crt));
+#endif
+    if (saved) {
+	if (!cert->cn && !snif_cert_setcn(cert, crt)) {
+	    X509_free(crt);
+	    return (snif_cert_TLSERR(cert), 0);
+	}
+	cert->download_at = exp - SNIF_CERT_REFRESH;
+    }
     X509_STORE_CTX *sctx = X509_STORE_CTX_new();
     STACK_OF(X509) *ca = sk_X509_new_null();
     SSL_CTX *ctx = SSL_CTX_new(snif_cert_sslmethod());
@@ -259,7 +302,11 @@ static int snif_cert_verify_chain(snif_cert *cert, BIO *in) {
 	    ctx = NULL;
 	}
     }
-    int vrfy = X509_STORE_CTX_init(sctx, cert->rootstore, crt, ca) > 0 ? X509_verify_cert(sctx) : 0;
+    int vrfy = X509_STORE_CTX_init(sctx, snif_cert_rootstore(cert), crt, ca) > 0;
+#ifdef	X509_V_FLAG_NO_CHECK_TIME
+    if (vrfy && saved) X509_STORE_CTX_set_flags(sctx, X509_V_FLAG_NO_CHECK_TIME);
+#endif
+    if (vrfy) vrfy = X509_verify_cert(sctx);
     cert->tlserr.ctxcode = X509_STORE_CTX_get_error(sctx);
     cert->tlserr.ctxdepth = X509_STORE_CTX_get_error_depth(sctx);
     X509_STORE_CTX_cleanup(sctx);
@@ -273,12 +320,7 @@ static int snif_cert_verify_chain(snif_cert *cert, BIO *in) {
 	vrfy = cn && cert->cn && !strncmp(cn, cert->cn, cl) && !cert->cn[cl] ? 1 : (snif_cert_TLSERR(cert), 0);
     }
     if (vrfy > 0) {
-#if	(OPENSSL_VERSION_NUMBER >= 0x10100000L)
-	time_t exp = snif_cert_asn1time(X509_get0_notAfter(crt));
-#else
-	time_t exp = snif_cert_asn1time(X509_get_notAfter(crt));
-#endif
-	if (exp - SNIF_CERT_REFRESH <= time(NULL)) vrfy = (snif_cert_TLSERR(cert), 0);
+	if (!saved && exp - SNIF_CERT_REFRESH <= time(NULL)) vrfy = (snif_cert_TLSERR(cert), 0);
 	if (cert->dl_ctx) SSL_CTX_free(cert->dl_ctx);
 	cert->dl_ctx = ctx;
 	ctx = NULL;
@@ -377,11 +419,8 @@ snif_cert *snif_cert_init_ex(snif_cert *cert, int flags) {
      * SNIF_F_KEYSPEC may be using an older, shorter struct without ca_keyspec.
      * .keyspec is caller-owned and left as set (see the struct doc). */
     if (flags & SNIF_F_KEYSPEC) cert->ca_keyspec = cert->apierr = NULL;
-    if (cert->rootstore) cert->alloc_rootstore = NULL;
-    else {
-	cert->rootstore = cert->alloc_rootstore = X509_STORE_new();
-	X509_STORE_set_default_paths(cert->rootstore);
-    }
+    cert->alloc_rootstore = NULL;
+    snif_cert_rootstore(cert);
     cert->tlserr.line = 0;
     cert->tlserr.code = 0;
     cert->unsaved = NULL;
@@ -464,7 +503,7 @@ int snif_cert_download(snif_cert *cert) {
 	}
 	if (code == 200 && cbuf->len > 0) {
 	    BIO *bio = BIO_new_mem_buf(cbuf->buf, cbuf->len);
-	    rs = snif_cert_verify_chain(cert, bio);
+	    rs = snif_cert_verify_chain(cert, bio, 0);
 	    BIO_free(bio);
 	    if (rs > 0) {
 		free(cert->unsaved);
@@ -693,10 +732,25 @@ void *snif_cert_ctx(snif_cert *cert) {
 	if (!pkey || (!au && cert->authurl)) return NULL;
 	SSL_CTX *ctx = cert->dl_ctx;
 	cert->dl_ctx = NULL;
-	if (!ctx) ctx = SSL_CTX_new(snif_cert_sslmethod());
+	char learned = 0;
+	if (!ctx) {
+	    learned = !cert->cn;
+	    BIO *bio = snif_cert_bio(cert, cert->certfile, 0);
+	    if (bio) {
+		snif_cert_verify_chain(cert, bio, 1);
+		BIO_free(bio);
+	    }
+	    ctx = cert->dl_ctx;
+	    cert->dl_ctx = NULL;
+	    if (!ctx) {
+		time_t t = time(NULL);
+		if (cert->download_at > t + SNIF_CERT_RETRY) cert->download_at = t + SNIF_CERT_RETRY;
+		cert->error = SNIF_CE_CERT;
+		return learned && cert->cn ? snif_cert_ctx(cert) : NULL;
+	    }
+	}
 	SSL *ssl;
 	if (SSL_CTX_use_PrivateKey(ctx, pkey) <= 0
-	    || (!SSL_CTX_get0_certificate(ctx) && SSL_CTX_use_certificate_chain_file(ctx, cert->certfile) <= 0)
 	    || SSL_CTX_check_private_key(ctx) <= 0
 	    || !(ssl = SSL_new(ctx))
 	) {
@@ -705,19 +759,6 @@ void *snif_cert_ctx(snif_cert *cert) {
 	    return NULL;
 	}
 	X509 *crt = SSL_get_certificate(ssl);
-	const char *cn = NULL;
-	if (crt && !cert->cn) {
-	    int cl;
-	    cn = snif_cert_getcn(crt, &cl);
-	    if (cn) {
-		if ((cert->cn = malloc(cl + 1))) {
-		    memcpy(cert->cn, cn, cl);
-		    cert->cn[cl] = 0;
-		} else cn = NULL;
-	    } else {
-		crt = NULL;
-	    }
-	}
 	if (!crt) {
 	    SSL_CTX_free(ctx);
 	    SSL_free(ssl);
@@ -734,7 +775,7 @@ void *snif_cert_ctx(snif_cert *cert) {
 	if (exp < t + SNIF_CERT_EXPIRE) {
 	    SSL_free(ssl);
 	    SSL_CTX_free(ctx);
-	    return cn ? snif_cert_ctx(cert) : NULL;
+	    return learned ? snif_cert_ctx(cert) : NULL;
 	}
 	cert->ctx = ctx;
 	if (cert->ssl) SSL_free(cert->ssl);
@@ -773,7 +814,10 @@ void snif_cert_reset(snif_cert *cert) {
     }
     free(cert->unsaved);
     cert->unsaved = NULL;
-    if (cert->alloc_rootstore) X509_STORE_free(cert->alloc_rootstore);
+    if (cert->alloc_rootstore) {
+	if (cert->rootstore == cert->alloc_rootstore) cert->rootstore = NULL;
+	X509_STORE_free(cert->alloc_rootstore);
+    }
     cert->alloc_rootstore = NULL;
 }
 

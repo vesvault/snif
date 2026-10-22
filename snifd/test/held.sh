@@ -52,7 +52,8 @@ openssl s_server -quiet -accept 127.0.0.1:28444 -cert be.pem -key be.key -www >/
 sleep 1
 
 conn_start() {	# conn_start <relay control port>
-    "$SNIFD" -c dev.crt -k dev.key -r 127.0.0.1:$1 28443:127.0.0.1:28444 29443:127.0.0.1:28444 >conn.log 2>&1 &
+    # libsnif verifies the connector's saved certificate against the default paths too.
+    SSL_CERT_FILE=$T/ca.pem "$SNIFD" -c dev.crt -k dev.key -r 127.0.0.1:$1 28443:127.0.0.1:28444 29443:127.0.0.1:28444 >conn.log 2>&1 &
     CONN=$!
 }
 conn_stop() { [ -n "$CONN" ] && kill $CONN 2>/dev/null; wait $CONN 2>/dev/null; CONN=; sleep 0.5; }

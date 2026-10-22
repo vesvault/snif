@@ -21,9 +21,54 @@
  **************************************************************************/
 
 
-Suggested location for the CA proxy files: /var/lib/snif/ca-proxy
+INSTALL
 
-Suggested user and group name for processes and files: snif
+Install snifd and libsnif from the top directory first, then the relay
+    from this one:
+
+        ./configure && make && sudo make install
+        cd ca-proxy && ./configure && make && sudo make install
+
+    The relay's programs are here: snif-relay, which runs snifd with this
+    tree's pipes, and snif-tunnel, beside the CA proxy daemons.
+
+The two installs make what is missing of:
+    - the snif user and group: a system user with no login, home
+      /var/lib/snif. An existing snif user is left as it is. The daemons
+      run as snif. Add the web server's user (e.g. www-data) to the snif
+      group: the PHP endpoints write the CSRs, the approvals and the
+      daemons' pipes, and read etc/.
+    - /etc/snif/snif.conf, read by snifd and the daemons.
+    - /var/lib/snif/ca-proxy, the CA proxy tree: the code (inc/,
+      public_html/, secure_html/), the runtime directories and pipes
+      (mkdirs below), etc/ linked to /etc/snif/ca-proxy and log/ linked to
+      /var/log/snif.
+    - the programs in /usr/bin, and the units in /lib/systemd/system:
+      snif-relay, snif-tunnel@, snif-certd, snif-apnsd and snif-syncd from
+      here, snif-conn from the top directory. None is enabled;
+      enable what the host runs, e.g. systemctl enable --now snif-relay
+      snif-certd.
+    - /etc/cron.d/snif-arc, which runs snif-arc daily (below), and
+      /etc/logrotate.d/snif for the daemons' logs. The per-domain
+      log/{domain}.log files are not rotated: snif-certd reads their
+      modification time as its one-hour retry throttle.
+
+Installing again replaces the code and the units, and keeps snif.conf,
+    etc/, the cron and logrotate entries, the state and the logs. etc/ holds the DNS keys, the CA keys and
+    the per-domain settings, so its example files are copied only where
+    absent. A code directory that the tree links elsewhere, such as a
+    release root, is left alone. With DESTDIR the install is staged, e.g.
+    for a package: no user is made, nothing is chowned and systemd is not
+    reloaded.
+
+mkdirs [base-dir] makes the runtime directories and pipes that are missing,
+    under base-dir, else SNIF_CA_PROXY from /etc/snif/snif.conf. The
+    install runs it. Run it again after SNIF_CLUSTER_PEERS changes, for
+    each peer's pipes and queue: as root it gives what it makes to snif,
+    otherwise run it as snif.
+
+The web server is not configured by the install; see public_html/ and
+    secure_html/ below.
 
 public_html/ is the HTTP root for catch-all SNIF domains
 
@@ -129,8 +174,8 @@ etc/{email}.ves-limit and etc/ves-limit (optional) limit the certificates a
 snif-certd daemon needs to be launched on the server start to process
     the certificate issuance for SNIF connectors.
 
-snif-arc needs to be launched periodically, recommended once a day via
-    crontab, to archive aging certificates: it moves any certificate older than
+snif-arc needs to be launched periodically, once a day: the install adds
+    /etc/cron.d/snif-arc for that. It archives aging certificates: it moves any certificate older than
     75 days out of crt/ into a dated folder under arc/. It does not reissue
     anything - removing the stale certificate is what lets snif-certd issue a
     fresh one the next time the connector requests it. A local-CA domain's
@@ -146,7 +191,7 @@ snif-apnsd is an optional process that sends APNS notifications to wake up
 snif-syncd keeps the CA proxy state of a relay cluster in step across its
     nodes (doc/cluster.md). It runs only on a node with peers: set
     SNIF_CLUSTER_NODE (this node's name) and SNIF_CLUSTER_PEERS
-    ("name=address ...") in /etc/snif.conf. It opens an ssh session to each
+    ("name=address ...") in /etc/snif/snif.conf. It opens an ssh session to each
     peer (SNIF_CLUSTER_PEER_CMD overrides the command), whose key's forced
     command on the peer is "snif-syncd --serve <this node>". Writers queue
     files with "snif-syncd enqueue <path>"; "snif-syncd status", "reconcile"
@@ -156,7 +201,7 @@ snif-syncd keeps the CA proxy state of a relay cluster in step across its
 
 CONTENTS:
 
-bin/         Certificate management scripts
+bin/         The relay (snif-relay, snif-tunnel) and certificate management scripts
 etc/         Configuration files
 public_html/ Insecure web root for SNIF domains, http://snif-1234-5678.example.com
 secure_html/ Secure web root for SNIF initializer, https://snif.example.com:4443

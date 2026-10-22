@@ -41,7 +41,7 @@ gives us reasonable time to remediate before public disclosure.
 In scope:
 
 - the SNIF connector (`lib/`, `snifd/`, `bin/snif-conn`),
-- the SNIF relay (`snifd` relay mode, `bin/snif-relay`),
+- the SNIF relay (`snifd` relay mode, `ca-proxy/bin/snif-relay`),
 - the SNIF CA proxy (`ca-proxy/`),
 - the protocol itself (see [`security-model.md`](security-model.md) and
   [draft-zubov-snif](https://datatracker.ietf.org/doc/draft-zubov-snif/)) —

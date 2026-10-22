@@ -22,8 +22,19 @@
 # *
 # **************************************************************************/
 
-. /etc/snif.conf
+# Settings come from /etc/snif/snif.conf, or /etc/snif.conf where an older
+# install put it. SNIF_CA_PROXY in the environment overrides it, as for the
+# daemons.
+if [ -z "$SNIF_CA_PROXY" ]; then
+    for f in /etc/snif/snif.conf /etc/snif.conf; do
+	if [ -r $f ]; then . $f; break; fi
+    done
+fi
 BaseDir=$SNIF_CA_PROXY
+if [ -z "$BaseDir" ] || [ ! -d "$BaseDir/crt" ]; then
+    echo "snif-arc: no CA proxy tree at '$BaseDir' (SNIF_CA_PROXY)" >&2
+    exit 1
+fi
 CertDir="$BaseDir/crt"
 ArcDir="$BaseDir/arc"
 

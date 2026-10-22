@@ -25,9 +25,11 @@
 use Net::APNS::Simple;
 use MIME::Base64;
 
-# SNIF_CA_PROXY in the environment overrides /etc/snif.conf, e.g. to run an
-# isolated instance against a scratch CA proxy tree.
-$BaseDir = $ENV{SNIF_CA_PROXY} || `. /etc/snif.conf; echo -n \$SNIF_CA_PROXY;`;
+# Settings come from /etc/snif/snif.conf, or /etc/snif.conf where an older
+# install put it. SNIF_CA_PROXY in the environment overrides it, e.g. to run
+# an isolated instance against a scratch CA proxy tree.
+$SnifConf = (grep { -r } '/etc/snif/snif.conf', '/etc/snif.conf')[0] || '/etc/snif/snif.conf';
+$BaseDir = $ENV{SNIF_CA_PROXY} || `. $SnifConf; echo -n \$SNIF_CA_PROXY;`;
 
 $EtcDir = "$BaseDir/etc";
 $ApnsDir = "$BaseDir/apns";

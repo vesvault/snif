@@ -23,33 +23,50 @@
 # **************************************************************************/
 
 # Create the runtime directories and control pipes the SNIF CA proxy daemons
-# and scripts expect. Resolve the base dir from /etc/snif.conf (the same
-# SNIF_CA_PROXY the daemons read); fall back to this script's own directory.
+# and scripts expect. What exists is left as it is, so it can run again, for
+# example after SNIF_CLUSTER_PEERS changes.
+#
+#   mkdirs [base-dir]
+#
+# The base dir is the argument, else SNIF_CA_PROXY from /etc/snif/snif.conf
+# (the same one the daemons read), else this script's own directory.
+# The daemons run as snif and own their pipes: run as root, it gives what it
+# creates to snif; otherwise run it as snif.
 
+BASE=$1
 for f in /etc/snif/snif.conf /etc/snif.conf; do
-    [ -r $f ] && . $f && break
+    if [ -r $f ]; then . $f; break; fi
 done
-SNIF_DIR="${SNIF_CA_PROXY:-$(dirname "$0")}"
+SNIF_DIR="${BASE:-${SNIF_CA_PROXY:-$(dirname "$0")}}"
 
-mkdir -m 02775 "$SNIF_DIR/crt"
-mkdir -m 02775 "$SNIF_DIR/csr"
-mkdir -m 02775 "$SNIF_DIR/cfg"
-mkdir -m 02775 "$SNIF_DIR/auth"
-mkdir -m 02755 "$SNIF_DIR/arc"
-mkdir -m 02755 "$SNIF_DIR/var"
-mkdir -m 02775 "$SNIF_DIR/apns"
-mkdir -m 02775 "$SNIF_DIR/log"
-mkdir -m 02775 "$SNIF_DIR/sync-queue"
+own() {
+    if [ "$(id -u)" = 0 ] && id -u snif >/dev/null 2>&1; then chown snif:snif "$1"; fi
+}
+mkd() {	# mkd <mode> <dir>
+    [ -d "$SNIF_DIR/$2" ] || { mkdir -m $1 "$SNIF_DIR/$2" && own "$SNIF_DIR/$2"; }
+}
+mkp() {	# mkp <mode> <fifo>
+    [ -p "$SNIF_DIR/$2" ] || { mkfifo -m $1 "$SNIF_DIR/$2" && own "$SNIF_DIR/$2"; }
+}
 
-mkfifo -m 0620 "$SNIF_DIR/var/snif-certd.ctl"
-mkfifo -m 0620 "$SNIF_DIR/var/snifd-in.ctl"
-mkfifo -m 0640 "$SNIF_DIR/var/snifd-out-apnsd.ctl"
+mkd 02775 crt
+mkd 02775 csr
+mkd 02775 cfg
+mkd 02775 auth
+mkd 02755 arc
+mkd 02755 var
+mkd 02775 apns
+mkd 02775 log
+mkd 02775 sync-queue
+
+mkp 0620 var/snif-certd.ctl
+mkp 0620 var/snifd-in.ctl
+mkp 0640 var/snifd-out-apnsd.ctl
 
 # A relay cluster node (doc/cluster.md): a FIFO pair and a queue per peer.
-# Safe to run again after SNIF_CLUSTER_PEERS changes.
 for p in $SNIF_CLUSTER_PEERS; do
     n=${p%%=*}
-    [ -p "$SNIF_DIR/var/snifd-out-peer-$n.ctl" ] || mkfifo -m 0620 "$SNIF_DIR/var/snifd-out-peer-$n.ctl"
-    [ -p "$SNIF_DIR/var/snifd-in-peer-$n.ctl" ] || mkfifo -m 0620 "$SNIF_DIR/var/snifd-in-peer-$n.ctl"
-    [ -d "$SNIF_DIR/sync-queue/$n" ] || mkdir -m 02775 "$SNIF_DIR/sync-queue/$n"
+    mkp 0620 var/snifd-out-peer-$n.ctl
+    mkp 0620 var/snifd-in-peer-$n.ctl
+    mkd 02775 sync-queue/$n
 done

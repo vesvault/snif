@@ -27,9 +27,11 @@
 # issue from a local CA (etc/<domain>.pub-ca + etc/<domain>.priv-ca) needs
 # neither of them installed.
 
-# SNIF_CA_PROXY in the environment overrides /etc/snif.conf, e.g. to run an
-# isolated instance against a scratch CA proxy tree.
-$BaseDir = $ENV{SNIF_CA_PROXY} || `. /etc/snif.conf; echo -n \$SNIF_CA_PROXY;`;
+# Settings come from /etc/snif/snif.conf, or /etc/snif.conf where an older
+# install put it. SNIF_CA_PROXY in the environment overrides it, e.g. to run
+# an isolated instance against a scratch CA proxy tree.
+$SnifConf = (grep { -r } '/etc/snif/snif.conf', '/etc/snif.conf')[0] || '/etc/snif/snif.conf';
+$BaseDir = $ENV{SNIF_CA_PROXY} || `. $SnifConf; echo -n \$SNIF_CA_PROXY;`;
 
 $WWWdir = "$BaseDir/public_html";
 $CSRdir = "$BaseDir/csr";
@@ -65,7 +67,7 @@ $PendingDays = 7;
 # for the peers.
 $SyncSock = "$BaseDir/var/snif-syncd.sock";
 $QueueDir = "$BaseDir/sync-queue";
-$CrtLease = $ENV{SNIF_CLUSTER_LEASE} || `. /etc/snif.conf 2>/dev/null; echo -n \$SNIF_CLUSTER_LEASE;` || 600;
+$CrtLease = $ENV{SNIF_CLUSTER_LEASE} || `. $SnifConf 2>/dev/null; echo -n \$SNIF_CLUSTER_LEASE;` || 600;
 
 sub dlog {
     my ($log, $msg) = @_;

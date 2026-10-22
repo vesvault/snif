@@ -1,10 +1,15 @@
 [Unit]
 Description=SNIF CA Proxy
+After=network-online.target
+Wants=network-online.target
 
 [Service]
 User=snif
 Group=snif
+NoNewPrivileges=yes
 ExecStart=/usr/bin/snif-certd
+Restart=on-failure
+RestartSec=5
 
 [Install]
 WantedBy=multi-user.target

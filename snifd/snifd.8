@@ -114,7 +114,11 @@ in
 .SS Connector options
 .TP
 .BI \-c " cert_file"
-Certificate file (PEM). Required for the connector role.
+Certificate file (PEM). Required for the connector role. At start the chain in
+it is verified against the trusted roots (see
+.BR ENVIRONMENT ),
+the private key and its name, as a downloaded one is. A chain that fails is not
+used, and a new certificate is requested from the CA proxy.
 .TP
 .BI \-k " pkey_file"
 Private key file for the certificate.
@@ -214,6 +218,19 @@ In connector mode the client address is as reported by the relay and is
 only as trustworthy as the relay; suitable for logging, rate limiting or
 geo lookups rather than as a sole access\-control input. On a relay static
 map the addresses are taken first\-hand from the accepted client socket.
+.SH ENVIRONMENT
+.TP
+.BR SSL_CERT_FILE ", " SSL_CERT_DIR
+The trusted roots: OpenSSL's default paths, which these override. A connector
+verifies its certificate chain against them, from
+.I cert_file
+at start and on each download; a relay verifies the connectors' certificates
+against them. For a base domain that issues from a private root, a local CA,
+put the root in a file named by
+.IR SSL_CERT_FILE .
+With only
+.I SSL_CERT_FILE
+set, the default directory is still searched, so public roots still verify.
 .SH FILES
 .TP
 .I /etc/snif/snif.conf

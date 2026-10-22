@@ -128,8 +128,7 @@ am__uninstall_files_from_dir = { \
        $(am__cd) "$$dir" && echo $$files | $(am__xargs_n) 40 $(am__rm_f); }; \
   }
 am__installdirs = "$(DESTDIR)$(bindir)" \
-	"$(DESTDIR)$(snifd_ca_basedir)" "$(DESTDIR)$(snifd_ca_etcdir)" \
-	"$(DESTDIR)$(snifd_ca_logdir)"
+	"$(DESTDIR)$(snifd_ca_basedir)"
 SCRIPTS = $(bin_SCRIPTS)
 AM_V_P = $(am__v_P_@AM_V@)
 am__v_P_ = $(am__v_P_@AM_DEFAULT_V@)
@@ -150,7 +149,7 @@ am__can_run_installinfo = \
     n|no|NO) false;; \
     *) (install-info --version) >/dev/null 2>&1;; \
   esac
-DATA = $(snifd_ca_base_DATA) $(snifd_ca_etc_DATA) $(snifd_ca_log_DATA)
+DATA = $(snifd_ca_base_DATA)
 am__tagged_files = $(HEADERS) $(SOURCES) $(TAGS_FILES) $(LISP)
 am__DIST_COMMON = $(srcdir)/Makefile.in \
 	$(top_srcdir)/../build-aux/install-sh \
@@ -259,13 +258,30 @@ target_alias = @target_alias@
 top_build_prefix = @top_build_prefix@
 top_builddir = @top_builddir@
 top_srcdir = @top_srcdir@
-bin_SCRIPTS = ../bin/snif-relay bin/snif-certd bin/snif-arc bin/snif-apnsd bin/snif-syncd
+bin_SCRIPTS = bin/snif-relay bin/snif-tunnel bin/snif-certd bin/snif-arc bin/snif-apnsd bin/snif-syncd
 snifd_ca_basedir = /var/lib/snif/ca-proxy
 snifd_ca_base_DATA = README
 snifd_ca_etcdir = /etc/snif/ca-proxy
-snifd_ca_etc_DATA = etc/snif.snif.xyz.domains etc/snif.xyz.tsig
-snifd_ca_logdir = /var/log/snif/
-snifd_ca_log_DATA = 
+snifd_ca_logdir = /var/log/snif
+systemdunitdir = /lib/systemd/system
+crondir = /etc/cron.d
+logrotatedir = /etc/logrotate.d
+
+# The relay side of SNIF: snif-relay, which runs snifd from the top-level
+# install with this tree's pipes, snif-tunnel, which carries a cluster
+# peer's pipe over ssh, and the CA proxy daemons. The hook adds the snif user, the CA proxy tree with its runtime directories
+# and pipes (mkdirs), etc/ and log/, and the units.
+# - Code is replaced: inc/, public_html/ and secure_html/, unless the tree
+#   links them elsewhere (a release root), and the units.
+# - etc/ holds the secrets and per-domain settings, so its example files are
+#   copied only where absent; state and logs are kept.
+# - The daily snif-arc cron entry, which lets certificates renew, and the
+#   logrotate entry for the daemons' logs go in where absent.
+# - Only a root install without DESTDIR makes the snif user, chowns to it
+#   and reloads systemd. A staged (DESTDIR) install, e.g. for a package,
+#   gets everything else.
+ROOT_INSTALL = [ -z "$(DESTDIR)" ] && [ "$$(id -u)" = 0 ]
+SNIF_OWNS = $(ROOT_INSTALL) && id -u snif >/dev/null 2>&1
 all: all-am
 
 .SUFFIXES:
@@ -358,48 +374,6 @@ uninstall-snifd_ca_baseDATA:
 	@list='$(snifd_ca_base_DATA)'; test -n "$(snifd_ca_basedir)" || list=; \
 	files=`for p in $$list; do echo $$p; done | sed -e 's|^.*/||'`; \
 	dir='$(DESTDIR)$(snifd_ca_basedir)'; $(am__uninstall_files_from_dir)
-install-snifd_ca_etcDATA: $(snifd_ca_etc_DATA)
-	@$(NORMAL_INSTALL)
-	@list='$(snifd_ca_etc_DATA)'; test -n "$(snifd_ca_etcdir)" || list=; \
-	if test -n "$$list"; then \
-	  echo " $(MKDIR_P) '$(DESTDIR)$(snifd_ca_etcdir)'"; \
-	  $(MKDIR_P) "$(DESTDIR)$(snifd_ca_etcdir)" || exit 1; \
-	fi; \
-	for p in $$list; do \
-	  if test -f "$$p"; then d=; else d="$(srcdir)/"; fi; \
-	  echo "$$d$$p"; \
-	done | $(am__base_list) | \
-	while read files; do \
-	  echo " $(INSTALL_DATA) $$files '$(DESTDIR)$(snifd_ca_etcdir)'"; \
-	  $(INSTALL_DATA) $$files "$(DESTDIR)$(snifd_ca_etcdir)" || exit $$?; \
-	done
-
-uninstall-snifd_ca_etcDATA:
-	@$(NORMAL_UNINSTALL)
-	@list='$(snifd_ca_etc_DATA)'; test -n "$(snifd_ca_etcdir)" || list=; \
-	files=`for p in $$list; do echo $$p; done | sed -e 's|^.*/||'`; \
-	dir='$(DESTDIR)$(snifd_ca_etcdir)'; $(am__uninstall_files_from_dir)
-install-snifd_ca_logDATA: $(snifd_ca_log_DATA)
-	@$(NORMAL_INSTALL)
-	@list='$(snifd_ca_log_DATA)'; test -n "$(snifd_ca_logdir)" || list=; \
-	if test -n "$$list"; then \
-	  echo " $(MKDIR_P) '$(DESTDIR)$(snifd_ca_logdir)'"; \
-	  $(MKDIR_P) "$(DESTDIR)$(snifd_ca_logdir)" || exit 1; \
-	fi; \
-	for p in $$list; do \
-	  if test -f "$$p"; then d=; else d="$(srcdir)/"; fi; \
-	  echo "$$d$$p"; \
-	done | $(am__base_list) | \
-	while read files; do \
-	  echo " $(INSTALL_DATA) $$files '$(DESTDIR)$(snifd_ca_logdir)'"; \
-	  $(INSTALL_DATA) $$files "$(DESTDIR)$(snifd_ca_logdir)" || exit $$?; \
-	done
-
-uninstall-snifd_ca_logDATA:
-	@$(NORMAL_UNINSTALL)
-	@list='$(snifd_ca_log_DATA)'; test -n "$(snifd_ca_logdir)" || list=; \
-	files=`for p in $$list; do echo $$p; done | sed -e 's|^.*/||'`; \
-	dir='$(DESTDIR)$(snifd_ca_logdir)'; $(am__uninstall_files_from_dir)
 tags TAGS:
 
 ctags CTAGS:
@@ -582,7 +556,7 @@ check-am: all-am
 check: check-am
 all-am: Makefile $(SCRIPTS) $(DATA)
 installdirs:
-	for dir in "$(DESTDIR)$(bindir)" "$(DESTDIR)$(snifd_ca_basedir)" "$(DESTDIR)$(snifd_ca_etcdir)" "$(DESTDIR)$(snifd_ca_logdir)"; do \
+	for dir in "$(DESTDIR)$(bindir)" "$(DESTDIR)$(snifd_ca_basedir)"; do \
 	  test -z "$$dir" || $(MKDIR_P) "$$dir"; \
 	done
 install: install-am
@@ -636,8 +610,7 @@ info: info-am
 
 info-am:
 
-install-data-am: install-snifd_ca_baseDATA install-snifd_ca_etcDATA \
-	install-snifd_ca_logDATA
+install-data-am: install-snifd_ca_baseDATA
 	@$(NORMAL_INSTALL)
 	$(MAKE) $(AM_MAKEFLAGS) install-data-hook
 install-dvi: install-dvi-am
@@ -684,8 +657,7 @@ ps: ps-am
 
 ps-am:
 
-uninstall-am: uninstall-binSCRIPTS uninstall-snifd_ca_baseDATA \
-	uninstall-snifd_ca_etcDATA uninstall-snifd_ca_logDATA
+uninstall-am: uninstall-binSCRIPTS uninstall-snifd_ca_baseDATA
 
 .MAKE: install-am install-data-am install-strip
 
@@ -699,41 +671,50 @@ uninstall-am: uninstall-binSCRIPTS uninstall-snifd_ca_baseDATA \
 	install-exec install-exec-am install-html install-html-am \
 	install-info install-info-am install-man install-pdf \
 	install-pdf-am install-ps install-ps-am \
-	install-snifd_ca_baseDATA install-snifd_ca_etcDATA \
-	install-snifd_ca_logDATA install-strip installcheck \
+	install-snifd_ca_baseDATA install-strip installcheck \
 	installcheck-am installdirs maintainer-clean \
 	maintainer-clean-generic mostlyclean mostlyclean-generic pdf \
 	pdf-am ps ps-am tags-am uninstall uninstall-am \
-	uninstall-binSCRIPTS uninstall-snifd_ca_baseDATA \
-	uninstall-snifd_ca_etcDATA uninstall-snifd_ca_logDATA
+	uninstall-binSCRIPTS uninstall-snifd_ca_baseDATA
 
 .PRECIOUS: Makefile
 
 
 install-data-hook:
-	chown snif:snif $(snifd_ca_basedir)
-	chmod 02775 $(snifd_ca_basedir)
-	chown snif:snif $(snifd_ca_etcdir)
-	chmod 02770 $(snifd_ca_etcdir)
-	chown snif:snif $(snifd_ca_logdir)
-	chmod 02770 $(snifd_ca_logdir)
-	cp -Ru inc $(snifd_ca_basedir)/
-	cp -Ru public_html $(snifd_ca_basedir)/
-	cp -Ru secure_html $(snifd_ca_basedir)/
-	[ -L $(snifd_ca_basedir)/etc ] || ln -s $(snifd_ca_etcdir) $(snifd_ca_basedir)/etc
-	[ -L $(snifd_ca_basedir)/log ] || ln -s $(snifd_ca_logdir) $(snifd_ca_basedir)/log
-	[ -d $(snifd_ca_basedir)/csr ] || mkdir -m 02775 $(snifd_ca_basedir)/csr
-	[ -d $(snifd_ca_basedir)/cfg ] || mkdir -m 02775 $(snifd_ca_basedir)/cfg
-	[ -d $(snifd_ca_basedir)/auth ] || mkdir -m 02775 $(snifd_ca_basedir)/auth
-	[ -d $(snifd_ca_basedir)/arc ] || mkdir -m 02755 $(snifd_ca_basedir)/arc
-	[ -d $(snifd_ca_basedir)/var ] || mkdir -m 02755 $(snifd_ca_basedir)/var
-	[ -d $(snifd_ca_basedir)/apns ] || mkdir -m 02775 $(snifd_ca_basedir)/apns
-	[ -d $(snifd_ca_basedir)/sync-queue ] || mkdir -m 02775 $(snifd_ca_basedir)/sync-queue
-	[ -p $(snifd_ca_basedir)/var/snif-certd.ctl ] || mkfifo -m 0620 $(snifd_ca_basedir)/var/snif-certd.ctl
-	[ -p $(snifd_ca_basedir)/var/snifd-in.ctl ] || mkfifo -m 0620 $(snifd_ca_basedir)/var/snifd-in.ctl
-	[ -p $(snifd_ca_basedir)/var/snifd-out-apnsd.ctl ] || mkfifo -m 0640 $(snifd_ca_basedir)/var/snifd-out-apnsd.ctl
-	chown -R snif $(snifd_ca_basedir)
-	[ -d /lib/systemd/system ] && cp etc/systemd/* /lib/systemd/system || true
+	if $(ROOT_INSTALL) && ! id -u snif >/dev/null 2>&1; then \
+	    if command -v useradd >/dev/null; then \
+		useradd -r -M -d /var/lib/snif -s "$$(command -v nologin || echo /bin/false)" \
+		    $$(getent group snif >/dev/null && echo '-g snif' || echo -U) snif; \
+	    else echo "No useradd here: make the snif user and group by hand." >&2; fi; \
+	fi
+	$(MKDIR_P) "$(DESTDIR)$(snifd_ca_etcdir)" "$(DESTDIR)$(snifd_ca_logdir)"
+	if $(SNIF_OWNS); then chown snif:snif $(snifd_ca_etcdir) $(snifd_ca_logdir) $(snifd_ca_basedir); fi
+	chmod 02770 "$(DESTDIR)$(snifd_ca_etcdir)" "$(DESTDIR)$(snifd_ca_logdir)"
+	chmod 02775 "$(DESTDIR)$(snifd_ca_basedir)"
+	[ -e "$(DESTDIR)$(snifd_ca_etcdir)/snif.snif.xyz.domains" ] || \
+	    $(INSTALL_DATA) $(srcdir)/etc/snif.snif.xyz.domains "$(DESTDIR)$(snifd_ca_etcdir)/"
+	[ -e "$(DESTDIR)$(snifd_ca_etcdir)/snif.xyz.tsig" ] || \
+	    $(INSTALL) -m 0640 $(srcdir)/etc/snif.xyz.tsig "$(DESTDIR)$(snifd_ca_etcdir)/"
+	for d in inc public_html secure_html; do \
+	    [ -L "$(DESTDIR)$(snifd_ca_basedir)/$$d" ] || cp -Ru $(srcdir)/$$d "$(DESTDIR)$(snifd_ca_basedir)/" || exit 1; \
+	done
+	[ -e "$(DESTDIR)$(snifd_ca_basedir)/etc" ] || ln -s $(snifd_ca_etcdir) "$(DESTDIR)$(snifd_ca_basedir)/etc"
+	[ -e "$(DESTDIR)$(snifd_ca_basedir)/log" ] || ln -s $(snifd_ca_logdir) "$(DESTDIR)$(snifd_ca_basedir)/log"
+	$(SHELL) $(srcdir)/mkdirs "$(DESTDIR)$(snifd_ca_basedir)"
+	if $(SNIF_OWNS); then chown -R snif:snif $(snifd_ca_basedir); fi
+	if [ -n "$(DESTDIR)" ] || [ -d $(systemdunitdir) ]; then \
+	    $(MKDIR_P) "$(DESTDIR)$(systemdunitdir)" && \
+	    $(INSTALL_DATA) $(srcdir)/etc/systemd/*.service "$(DESTDIR)$(systemdunitdir)/"; \
+	fi
+	if [ ! -e "$(DESTDIR)$(crondir)/snif-arc" ] && { [ -n "$(DESTDIR)" ] || [ -d $(crondir) ]; }; then \
+	    $(MKDIR_P) "$(DESTDIR)$(crondir)" && \
+	    $(INSTALL_DATA) $(srcdir)/etc/cron.d/snif-arc "$(DESTDIR)$(crondir)/"; \
+	fi
+	if [ ! -e "$(DESTDIR)$(logrotatedir)/snif" ] && { [ -n "$(DESTDIR)" ] || [ -d $(logrotatedir) ]; }; then \
+	    $(MKDIR_P) "$(DESTDIR)$(logrotatedir)" && \
+	    $(INSTALL_DATA) $(srcdir)/etc/logrotate.d/snif "$(DESTDIR)$(logrotatedir)/"; \
+	fi
+	if $(ROOT_INSTALL) && [ -d /run/systemd/system ]; then systemctl daemon-reload || true; fi
 
 # Tell versions [3.59,3.63) of GNU make to not export all variables.
 # Otherwise a system limit (for SysV at least) may be exceeded.
