@@ -36,10 +36,11 @@ $ApnsDir = "$BaseDir/apns";
 $LogDir = "$BaseDir/log";
 $CtlFifo ="$BaseDir/var/snifd-out-apnsd.ctl";
 
-# APNS configuration
-$BundleId = "com.example.app";
-$TeamId = "ABCD123456";
-$Prod = 1;
+# APNS configuration, from snif.conf: the iOS app's bundle ID, and the
+# development environment instead of production. With no bundle ID, wake
+# tokens are still stored and synced, and no push is sent.
+$BundleId = $ENV{SNIF_APNS_BUNDLE} || `. $SnifConf 2>/dev/null; echo -n \$SNIF_APNS_BUNDLE;`;
+$Prod = !($ENV{SNIF_APNS_DEV} || `. $SnifConf 2>/dev/null; echo -n \$SNIF_APNS_DEV;`);
 
 
 $ResendAfter = 20;
@@ -50,6 +51,7 @@ $Apns;
 
 sub apns_send {
     my ($token, $msg) = @_;
+    return if !$BundleId;
     my $crtf = $Prod ? "apns" : "apns-dev";
     if (!$Apns) {
 	$Apns = Net::APNS::Simple->new(
@@ -81,6 +83,7 @@ sub apns_rspfn {
 }
 
 sub apns_commit {
+    return if !$Apns;
     $Apns->notify() || undef($Apns);
 }
 
@@ -151,6 +154,7 @@ open STDERR, ">>$LogDir/log_snif-apnsd";
 select STDERR;
 $| = 1;
 dlog(STDERR, "starting snif-apnsd");
+dlog(STDERR, "SNIF_APNS_BUNDLE is not set in $SnifConf: storing wake tokens, sending no pushes") if !$BundleId;
 
 
 while (1) {

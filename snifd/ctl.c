@@ -159,6 +159,8 @@ void snif_ctl_pollfn(snif_sock *sock, struct pollfd *pollfd) {
 			if (sock->ctl.pushtime < t) sock->ctl.pushtime = t;
 			sock->ctl.pushtime++;
 			snif_listen_pushl(sock->listen, sock->rd->buf, len);
+			/* and to the host's other connectors here; a peer node hands it to its own */
+			if (!strcmp(cmd2, "MSG")) snif_host_notifyx(sock->ctl.host, sock->rd->buf, len, sock);
 		    }
 		}
 	    } else if (c >= 1 && !strcmp(cmd1, "NOOP")) {

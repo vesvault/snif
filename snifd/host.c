@@ -78,11 +78,11 @@ snif_host *snif_host_get(const char *hostname, int len) {
     return host;
 }
 
-int snif_host_notifyl(snif_host *host, const char *ntfy, int l) {
+int snif_host_notifyx(snif_host *host, const char *ntfy, int l, snif_sock *except) {
     snif_sock *ctl;
     int ct = 0;
     for (ctl = host->ctls; ctl; ctl = ctl->chain) {
-	if (snif_ctl_out(ctl, ntfy, l) > 0) ct++;
+	if (ctl != except && snif_ctl_out(ctl, ntfy, l) > 0) ct++;
     }
     return ct;
 }

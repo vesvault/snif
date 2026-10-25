@@ -357,6 +357,20 @@ $r = ask('d', 'SEED a');
 check(scalar($r =~ /^OK /) && !grep({ !-e tree('d') . "/$_" } qw(csr/snif-1.x.test.csr csr/snif-8.x.test.csr cfg/snif-3.x.test.cfg crt/snif-4.x.test.crt)),
     "SEED a copies a's state to d ($r)");
 
+# A crt/ that is a link, as in a tree from the initial release (crt ->
+# public_html/snif-cert): LIST and reconciliation still see what it holds.
+{
+    my $e = tree('e');
+    make_path("$e/public_html/snif-cert");
+    symlink("$e/public_html/snif-cert", "$e/crt");
+    spew("$e/public_html/snif-cert/snif-11.x.test.crt", slurp("$T/long.pem"));
+    local $ENV{SNIF_CA_PROXY} = $e;
+    open(my $p, '-|', $^X, '-e', 'do $ARGV[0] or die $@ || $!; print map { "$_->[0]\n" } main::list_local("crt")', $syncd) || die "$^X: $!";
+    my $out = do { local $/; <$p> } // '';
+    close $p;
+    check($out eq "crt/snif-11.x.test.crt\n", "LIST crt follows a crt/ that is a link (" . join(' ', split(/\n/, $out)) . ")");
+}
+
 if ($fail) {
     foreach my $n (sort grep { -e tree($_) . "/syncd.log" } qw(a b c d)) {
 	print "\n---- $n: last lines of syncd.log\n";

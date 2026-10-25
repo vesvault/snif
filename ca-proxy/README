@@ -91,6 +91,19 @@ etc/{SNIF_initialization_domain}.domains contains the list of {domain} names
     to issue SNIF hosts as subdomains that are expected to point to CNAME
     snif-pool.{domain}, and to be served by HTTP public.html/
 
+    It also makes {SNIF_initialization_domain} an init origin for
+    snif-certd. "SNIF CERT {SNIF_initialization_domain}" on its control pipe
+    issues a certificate for that name itself, not a wildcard, from
+    csr/{SNIF_initialization_domain}.csr, always from Let's Encrypt (DNS-01
+    with the .tsig of its base domain, else HTTP-01), never from a local CA.
+    For DNS-01, _acme-challenge.{SNIF_initialization_domain} must be an alias,
+    since a name that exists is not covered by the *.{domain} wildcard. The
+    web endpoints never ask for it: the operator's tooling writes the CSR and
+    sends the request. In a relay cluster it is issued under the certificate
+    lease and synced like any certificate (doc/cluster.md 4). This is
+    optional: the init origin's certificate is the web server's, and any
+    ACME client can keep it instead.
+
 etc/{SNIF_domain}.tsig must contain a DDNS TSIG that permits managing IN TXT
     RRs at the name _acme-challenge.{host} is an alias for, for CA domain
     verification: snif-pool.{SNIF_domain}, through the *.{SNIF_domain}
@@ -187,6 +200,11 @@ snif-apnsd is an optional process that sends APNS notifications to wake up
     device has registered with APNS and has communicated the hex APNS ID to
     SNIF relay over the control connection by sending
     "SNIF MSG hostname.snif-1234-5678.example.com apns=0123ABCD..."
+    Set SNIF_APNS_BUNDLE in /etc/snif/snif.conf to the app's bundle ID, with
+    its APNs certificate in etc/apns.cer and etc/apns.key, or, with
+    SNIF_APNS_DEV=1, etc/apns-dev.cer and etc/apns-dev.key for the
+    development environment. Without SNIF_APNS_BUNDLE it stores wake tokens
+    and sends nothing.
 
 snif-syncd keeps the CA proxy state of a relay cluster in step across its
     nodes (doc/cluster.md). It runs only on a node with peers: set

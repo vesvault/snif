@@ -4,8 +4,9 @@
 # each node a CA proxy tree with the PHP served by "php -S", snif-certd issuing
 # from a throwaway local CA (no network), and snif-syncd. Enrols a device
 # across the two nodes, then checks that neither node accepts a CSR alone when
-# a snif-syncd is down, and that a tree without etc/cluster.node behaves as a
-# single relay always has.
+# a snif-syncd is down, that a tree without etc/cluster.node behaves as a
+# single relay always has, and that a CA proxy with no snif-certd running
+# answers at once.
 #
 #   perl ca-proxy/test/cluster.t
 #
@@ -19,6 +20,7 @@ use File::Path qw(make_path);
 use File::Copy qw(copy);
 use FindBin;
 use Time::HiRes qw(time sleep);
+use POSIX ();
 $| = 1;
 
 my $Src = "$FindBin::Bin/..";
@@ -74,8 +76,10 @@ sub tree {
 }
 sub start_php {
     my ($n, $d, $pub, $sec) = @_;
+    my $um = umask(022);	# php-fpm's
     spawn($n, "$d/php.log", _CMD => ['php', '-S', "127.0.0.1:$pub", '-t', "$d/public_html", "$d/public_html/router.php"]);
     spawn($n, "$d/php.log", _CMD => ['php', '-S', "127.0.0.1:$sec", '-t', "$d/secure_html"]);
+    umask($um);
 }
 sub start_certd { my ($n, $d) = @_; spawn($n, "$d/certd.out", SNIF_CA_PROXY => $d, _CMD => [$^X, "$Src/bin/snif-certd"]) }
 sub start_syncd {
@@ -116,6 +120,10 @@ my ($code, $body) = http('GET', "http://127.0.0.1:$Port{a}[1]/snif-auth.php", 'i
 (my $cn = $body) =~ s/^\*\.|\s+$//g;
 check($code eq '200' && $cn =~ /^snif-[0-9a-f]{12}-[0-9a-f]{8}\.lca\.test$/, "a allocates a name ($code $cn)");
 check(wait_for(sub { -e "$B/cfg/$cn.cfg" }, 10), "its cfg reaches b");
+# On a node snif-syncd is another user than the PHP's: it can move the link out
+# only if the group can write the directory the PHP made for it.
+my $qm = ((stat "$A/sync-queue/b/cfg")[2] // 0) & 07777;
+check(($qm & 070) == 070, sprintf("the queue directory the PHP made is group-writable (%o)", $qm));
 
 # 2. The CSR, PUT on b.
 my $csr = csr_for($cn, 'dev');
@@ -176,6 +184,25 @@ my $csr5 = csr_for($cn5, 'dev5');
 ($code) = http('PUT', "http://127.0.0.1:$Port{s}[0]/snif-cert/$cn5.csr", $cn5, $csr5);
 my ($code2) = http('PUT', "http://127.0.0.1:$Port{s}[0]/snif-cert/$cn5.csr", $cn5, $csr5);
 check($code eq '201' && $code2 eq '403' && !-d "$S/sync-queue/b", "a single relay: 201, then 403 for a repeat, as before ($code, $code2)");
+
+# 8. No snif-certd reads s's var/snif-certd.ctl: a certificate request for an
+# approved name gets 502 at once, where a blocking open of the pipe held it
+# until the web server gave up. With a reader, the request reaches it.
+spew("$S/auth/$cn5.auth", "user\@example.com");
+my $t0 = time;
+($code) = http('GET', "http://127.0.0.1:$Port{s}[0]/snif-cert/$cn5.crt", $cn5);
+my $dt = time - $t0;
+check($code eq '502' && $dt < 5, sprintf("no snif-certd: 502 at once (%s, %.1f s)", $code, $dt));
+my $rd = fork;
+if (!$rd) {	# _exit: no END blocks, no temp directory cleanup in the child
+    open(my $f, '<', "$S/var/snif-certd.ctl") || POSIX::_exit(1);
+    spew("$T/s.ctl", scalar(<$f>) // '');
+    POSIX::_exit(0);
+}
+sleep 0.5;
+($code) = http('GET', "http://127.0.0.1:$Port{s}[0]/snif-cert/$cn5.crt", $cn5);
+waitpid($rd, 0);
+check($code eq '503' && (slurp("$T/s.ctl") // '') eq "SNIF CERT $cn5\r\n", "with a reader: 503, and it reads SNIF CERT <name> ($code)");
 
 if ($fail) {
     foreach my $f (map { ("$T/$_/syncd.log", "$T/$_/log/log_snif-certd", "$T/$_/php.log") } qw(a b)) {

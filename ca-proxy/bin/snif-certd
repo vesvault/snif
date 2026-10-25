@@ -238,7 +238,7 @@ sub getcert_issue {
     $ErrDomain = $domain;
     my $base = base_domain($domain);
     my ($cert, $chain);
-    if ($base && (-e("$EtcDir/$base.pub-ca") || -e("$EtcDir/$base.priv-ca"))) {
+    if (!is_origin($domain) && $base && (-e("$EtcDir/$base.pub-ca") || -e("$EtcDir/$base.priv-ca"))) {
 	$mode = 'local';
 	dlog(LOG, "issue $domain (mode=$mode) ...");
 	my $er;
@@ -294,12 +294,24 @@ sub getcert_issue {
     return 0;
 }
 
+# An init origin, the name connectors enrol through (etc/<name>.domains), gets
+# a certificate for that name itself, from Let's Encrypt even under a
+# local-CA base domain: connectors reach it before they hold anything signed
+# by a local CA. A device zone gets the wildcard. Nothing on the web side
+# asks for an origin's certificate, since it has no cfg/ file; the operator's
+# tooling writes its CSR and sends SNIF CERT.
+sub is_origin {
+    my ($domain) = @_;
+    return -e "$EtcDir/$domain.domains";
+}
+
 # The ACME steps for $domain. Returns true once the certificate is issued; on
 # failure lelog() has recorded the error and closed LOG.
 sub issue_le {
     my ($le, $domain, $mode) = @_;
+    my $name = (is_origin($domain) || $mode eq 'http' ? "" : "*.") . $domain;
     lelog(LOG, $le, $le->load_account_key("$EtcDir/account.key"), "load_account_key") || return;
-    lelog(LOG, $le, $le->load_csr("$CSRdir/$domain.csr", ($mode eq 'http' ? "" : "*.") . $domain), "load_csr") || return;
+    lelog(LOG, $le, $le->load_csr("$CSRdir/$domain.csr", $name), "load_csr") || return;
     lelog(LOG, $le, $le->register(), "register") || return;
     lelog(LOG, $le, $le->accept_tos(), "accept_tos") || return;
     lelog(LOG, $le, $le->request_challenge(), "request_challenge") || return;

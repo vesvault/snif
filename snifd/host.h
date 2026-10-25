@@ -33,7 +33,8 @@ typedef struct snif_host {
 } snif_host;
 
 struct snif_host *snif_host_get(const char *hostname, int len);
-int snif_host_notifyl(struct snif_host *host, const char *ntfy, int l);
+int snif_host_notifyx(struct snif_host *host, const char *ntfy, int l, struct snif_sock *except);
+#define	snif_host_notifyl(host, ntfy, l)	snif_host_notifyx(host, ntfy, l, NULL)
 #define	snif_host_notify(host, ntfy)	snif_host_notifyl(host, ntfy, strlen(ntfy))
 void snif_host_chkalive(snif_host *host);
 void snif_host_hold(struct snif_host *host, const char *connid, const char *ntfy, int l, int tmout);

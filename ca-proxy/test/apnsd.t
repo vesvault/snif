@@ -24,8 +24,8 @@ sub check {
 
 package Net::APNS::Simple;
 $INC{'Net/APNS/Simple.pm'} = 1;
-our @Sent;
-sub new { bless {}, shift }
+our (@Sent, %New);
+sub new { my $c = shift; %New = @_; bless {}, $c }
 sub prepare { my ($s, $token) = @_; push @Sent, $token }
 sub notify { 1 }
 
@@ -34,6 +34,7 @@ package main;
 my $tree = tempdir(CLEANUP => 1);
 mkdir "$tree/$_" foreach qw(etc apns log var);
 $ENV{SNIF_CA_PROXY} = $tree;
+$ENV{SNIF_APNS_BUNDLE} = 'com.example.test';
 
 open(my $fh, '<', $apnsd) or die "$apnsd: $!";
 my $src = do { local $/; <$fh> };
@@ -42,11 +43,12 @@ close $fh;
 # stop it before the daemon loop, and point it at the scratch tree.
 $src =~ s/^close STDERR;$/return 1;\nclose STDERR;/m if $src !~ /^return 1 if caller;$/m;
 $src =~ s/^\$BaseDir = `/\$BaseDir = \$ENV{SNIF_CA_PROXY} || `/m if $src !~ /SNIF_CA_PROXY\}/;
-{
+sub load {
     no strict; no warnings;
     eval $src;
     die "loading $apnsd: $@" if $@;
 }
+load();
 
 my $host = 'snif-abcdefg12345.snif.xyz';
 my $f = main::apns_fname($host);
@@ -72,6 +74,30 @@ main::host_check($host, 'connid-1');
 check(scalar("@Net::APNS::Simple::Sent" eq 'token-2'), "host_check wakes with the replaced token");
 main::host_check($host, 'connid-2');
 check(scalar(@Net::APNS::Simple::Sent == 1), "and not again within \$ResendAfter");
+my %new = %Net::APNS::Simple::New;
+check(scalar(($new{bundle_id} // '') eq 'com.example.test'), "the bundle ID comes from SNIF_APNS_BUNDLE");
+check(scalar(!$new{development} && ($new{cert_file} // '') eq "$tree/etc/apns.cer"), "production by default, with etc/apns.cer");
+
+# No bundle ID: a token is still stored, and no push goes out.
+{ no warnings 'once'; $main::BundleId = ''; }
+$main::Apns = undef;
+@Net::APNS::Simple::Sent = ();
+my $host2 = 'snif-hijklmn67890.snif.xyz';
+main::host_set_apns($host2, 'token-3');
+utime($old, $old, main::apns_fname($host2));
+my $ok = eval { main::host_check($host2, 'connid-3'); 1 };
+check(scalar($ok && !@Net::APNS::Simple::Sent && (slurp(main::apns_fname($host2)) // '') eq 'token-3'),
+    "with no bundle ID, a token is stored and no push is sent" . ($ok ? '' : ": $@"));
+
+{
+    local $ENV{SNIF_APNS_DEV} = 1;
+    load();
+}
+$main::Apns = undef;
+%Net::APNS::Simple::New = ();
+main::apns_send('token-4', 'msg');
+%new = %Net::APNS::Simple::New;
+check(scalar($new{development} && ($new{cert_file} // '') eq "$tree/etc/apns-dev.cer"), "SNIF_APNS_DEV=1: development, with etc/apns-dev.cer");
 
 print "\n$pass passed, $fail failed\n";
 exit($fail ? 1 : 0);

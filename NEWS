@@ -1,5 +1,60 @@
 snif NEWS -- history of user-visible changes
 
+Version 1.09
+------------
+
+* relay: snifd crashed at start when an output FIFO (-p) had no reader:
+  a cluster node's tunnel FIFOs until its tunnels start, which their
+  units order after the relay, or snifd-out-apnsd.ctl on a relay that
+  runs no snif-apnsd. Such a FIFO is now retried from the start, and
+  keeps what is pushed to it, up to its buffer, until a reader opens it,
+  as it already did after a reader went away. Present since the first
+  release; a heap that happened to hold zeros hid it.
+
+* relay: a connector's SNIF MSG for its own name also reaches the
+  relay's other control connections for that name, never the sender.
+  It went only to the output FIFOs, so other connectors with the name
+  got it only through a peer node of a cluster. The relay accepts more
+  than one connection for a name, which can be the same device back
+  after a network problem, and such connectors learn of each other
+  through MSG. Connectors need no change: libsnif passes the line to
+  the app's callback.
+
+* ca-proxy: snif-certd issues an init origin's certificate for its own
+  name ("SNIF CERT <origin>", from csr/<origin>.csr), always from Let's
+  Encrypt, by DNS-01 with the base domain's .tsig, else HTTP-01, never
+  from a local CA. It asked for *.<origin>, which does not cover the
+  origin. In a relay cluster the origin's certificate goes through the
+  certificate lease and the sync like any other.
+
+* ca-proxy: snif-syncd listed nothing in a class directory that is a
+  symlink, such as crt -> public_html/snif-cert in a tree from the first
+  release, so reconciliation and seeding skipped its certificates. It
+  now follows the link.
+
+* ca-proxy: snif-apnsd takes the iOS app's bundle ID from
+  SNIF_APNS_BUNDLE, and the development environment from
+  SNIF_APNS_DEV=1, in snif.conf; the script held sample values that
+  snif.conf could not change. Without SNIF_APNS_BUNDLE it stores and
+  syncs wake tokens and sends no pushes, so set it before this release
+  replaces a snif-apnsd that sends.
+
+* ca-proxy: in a relay cluster, the queue directories the PHP made for a
+  peer (sync-queue/<peer>/cfg, auth, ...) were writable by the web
+  server's user alone (umask 0022), so snif-syncd, another user, could
+  not take entries out of them: names allocated and approvals given on
+  one node never reached the others, and a connector polling another
+  node for its certificate got 401 for good. The PHP now makes them
+  group-writable. On a node that already has them, make the ones the web
+  server's user owns group-writable (chmod 2775).
+
+* ca-proxy: a certificate request, or an approval, on a CA proxy where no
+  snif-certd was reading var/snif-certd.ctl waited in the PHP's open of
+  the pipe until the web server killed it, holding a server process
+  each; a connector polling for its certificate kept adding more. The
+  pipe is now opened non-blocking: the certificate request gets 502 at
+  once, and the approval its 202.
+
 Version 1.08
 ------------
 

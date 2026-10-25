@@ -148,7 +148,7 @@ sub list_local {
 	my $data = slurp($_);
 	return if !defined $data;
 	push @out, [$rel, length($data), $st[9], sha256_hex($data)];
-    } }, "$BaseDir/$dir");
+    } }, "$BaseDir/$dir/");	# the slash follows a directory that is a link, e.g. crt -> public_html/snif-cert
     return sort { $a->[0] cmp $b->[0] } @out;
 }
 

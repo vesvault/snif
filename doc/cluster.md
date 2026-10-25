@@ -155,7 +155,12 @@ lines at all.
 
 A connector's `MSG` also crosses every tunnel, because a tunnel is an output
 FIFO like any other. Each peer hands it only to its own control connections
-for that host, if any. The protocol allows that: draft-05 §4.1 says a
+for that host, if any. The node it was sent to hands it to its other control
+connections for that host, never back to the sender (`snif_ctl_pollfn`), so
+devices that share a name hear each other wherever they are connected. The
+relay does not refuse a second connection for a name, which can be the same
+device back after a network problem; such devices learn of each other
+through `MSG`. The protocol allows that: draft-05 §4.1 says a
 `SNIF MSG` may reach a connector once per cluster node, and that connectors
 must process it idempotently.
 
@@ -354,10 +359,22 @@ current counts carry over.
 key shared by the nodes** (decided 2026-10-14). The name then follows the
 rule every other name follows: one name, one key.
 - The key is a secret, installed on each node by hand like those above.
-- The operator issues the certificate with that key, as today, and installs
-  the same certificate on every node.
-- It stays outside the `csr/` and `crt/` sync, since `snif-certd` issues
-  only device names. snifdog keeps ignoring the name (`SNIFDOG_NAME_ALLOW`).
+- **The certificate is the web server's, from either of two sources:**
+  - **An ACME client outside the CA proxy.** The VES relay does this
+    (2026-10-25): its estate's issuer renews by the certificate's expiry,
+    and the nodes send it the same CSR, made once from the shared key and
+    copied with it, so each renewal is one certificate for all of them.
+  - **`snif-certd`.** `etc/<origin>.domains` makes the name an origin:
+    `SNIF CERT <origin>` issues that name itself, from Let's Encrypt, never
+    a wildcard and never from a local CA. The operator's tooling writes
+    `csr/<origin>.csr` from the shared key through `CSR` (section 7.2), as
+    `snif-cert.php` does for a device, and sends `SNIF CERT` when the
+    certificate is due. `snif-certd` keeps no schedule of its own, and no
+    web endpoint asks, since there is no `cfg/` file for the name. The
+    certificate lease means one node issues; the others get
+    `crt/<origin>.crt` from the sync, and install it for their web server.
+- snifdog keeps ignoring the name (`SNIFDOG_NAME_ALLOW`), in every base
+  domain's configuration.
 
 ## 5. Accepting a CSR
 
@@ -737,9 +754,11 @@ refused validation, which `snif-certd` retries.
   - A nameserver that is down does not cause this, because resolvers move on
     to the other server.
 - **Other names:**
-  - The init origin's challenge name is an alias for the pool name too
-    (`_acme-challenge.<init origin> CNAME snif-pool.<base>`). A name that
-    exists is not covered by the wildcard.
+  - When `snif-certd` issues the init origin (section 4), its challenge
+    name is an alias for the pool name too (`_acme-challenge.<init origin>
+    CNAME snif-pool.<base>`). A name that exists is not covered by the
+    wildcard. An ACME client outside the CA proxy needs the alias pointed at
+    its own challenge record instead.
   - The wildcards of other base domains (for example a private-CA domain)
     point at the pool name for the nodes' addresses. Private-CA names need no
     challenges.

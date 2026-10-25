@@ -137,12 +137,12 @@ sub owner { $_[0]{owner} }
 package Crypt::LE;
 $INC{'Crypt/LE.pm'} = 1;
 $INC{'Crypt/OpenSSL/RSA.pm'} = 1;	# load_le() requires it for its padding shim
-our (@Names, $VerifyFails, $Verified, @SeenAtVerify);
+our (@Names, $VerifyFails, $Verified, @SeenAtVerify, $CSRNames);
 sub OK { 0 }
 sub new { bless {}, shift }
 sub error_details { $_[0]{err} || 'stub error' }
 sub load_account_key { 0 }
-sub load_csr { 0 }
+sub load_csr { $CSRNames = $_[2]; 0 }
 sub register { 0 }
 sub accept_tos { 0 }
 sub request_challenge { 0 }
@@ -379,6 +379,40 @@ sub updlog { join('; ', @Stub::UpdLog) }
     $Stub::RefuseDel = 1;
     { local *STDERR; open(STDERR, '>>', "$tree/log/stderr"); main::cleanup_challenges(); }
     check(!-e $main::PendingFile, 'stale removal: given up after $PendingDays days');
+}
+
+# 16. An init origin (etc/<origin>.domains) gets a certificate for its own
+#     name, not the wildcard, by DNS-01 through its own challenge name.
+my $origin = 'snif.example.test';
+sub origin_attempt {
+    attempt($origin);
+    open(my $f, '>', "$tree/etc/$origin.domains"); print $f "example.test\n"; close $f;
+    open(my $c, '>', "$tree/csr/$origin.csr"); print $c "stub csr\n"; close $c;
+    $Crypt::LE::CSRNames = undef;
+}
+{
+    origin_attempt();
+    run($origin);
+    check(issued($origin), "origin: issued");
+    check(($Crypt::LE::CSRNames // '') eq $origin, "origin: the CSR is checked for the name itself (" . ($Crypt::LE::CSRNames // 'none') . ")");
+    check($main::mode eq 'dns' && @Crypt::LE::SeenAtVerify && !grep(/ 0$/, @Crypt::LE::SeenAtVerify),
+	"origin: DNS-01, the value served at its challenge alias ($main::mode; " . join('; ', @Crypt::LE::SeenAtVerify) . ")");
+    my $d = attempt('*.x.example.test');
+    run($d);
+    check(($Crypt::LE::CSRNames // '') eq "*.$d", "device zone beside an origin: still the wildcard");
+}
+
+# 17. An origin under a local-CA base domain still issues from Let's Encrypt;
+#     the base's device zones still issue locally.
+{
+    origin_attempt();
+    open(my $p, '>', "$tree/etc/example.test.pub-ca"); close $p;
+    run($origin);
+    check(issued($origin) && $main::mode eq 'dns', "origin under a local CA: Let's Encrypt ($main::mode)");
+    my $d = attempt('*.x.example.test');
+    run($d);
+    check($main::mode eq 'local', "device zone under that local CA: local ($main::mode)");
+    unlink "$tree/etc/example.test.pub-ca", "$tree/etc/$origin.domains";
 }
 
 # 7. Updates only ever delete a specific value, never the whole RRset.

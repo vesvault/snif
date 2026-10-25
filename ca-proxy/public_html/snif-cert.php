@@ -116,7 +116,11 @@ if ($_SERVER['REQUEST_URI'] == "/snif-cert/$Domain.csr") {
     }
     set_time_limit(2);
     $w = 0;
-    $fd = fopen("$BasePath/var/snif-certd.ctl", "w");
+    # "n" opens the pipe non-blocking: with no snif-certd reading it, the open
+    # fails at once (ENXIO) and the client gets 502. A blocking open held the
+    # request until the web server gave up on it; set_time_limit() does not
+    # count time spent blocked in open().
+    $fd = @fopen("$BasePath/var/snif-certd.ctl", "wn");
     if ($fd) {
 	stream_set_blocking($fd, false);
 	$buf = "SNIF CERT $Domain\r\n";

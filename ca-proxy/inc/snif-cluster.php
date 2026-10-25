@@ -53,15 +53,20 @@ function snif_cluster_req($line, $body = '') {
 
 # Queue a file, by its path under the CA proxy base, for every peer: a link in
 # each sync-queue/<peer>/, which snif-syncd keeps equal to its listed peers.
-# This needs no running daemon; the SYNC only wakes it.
+# This needs no running daemon; the SYNC only wakes it. snif-syncd moves the
+# links out as snif, and the web server's umask (0022 for php-fpm) would leave
+# a directory made here writable by this user alone: its queue would never
+# drain.
 function snif_cluster_enqueue($rel) {
     if (!snif_cluster_node()) return;
     $base = $GLOBALS['SnifBase'];
+    $um = umask(0002);
     foreach (glob("$base/sync-queue/*", GLOB_ONLYDIR) as $q) {
 	$entry = "$q/$rel";
 	if (!is_dir(dirname($entry))) @mkdir(dirname($entry), 02775, true);
 	@symlink("$base/$rel", $entry);
     }
+    umask($um);
     $fd = @stream_socket_client("unix://$base/var/snif-syncd.sock", $errno, $errstr, 1);
     if ($fd) {
 	fwrite($fd, "SYNC\n");

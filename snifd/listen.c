@@ -59,8 +59,10 @@ snif_sock *snif_listen_add(snif_listen *lstn, snif_sock *sock) {
     }
     if (i >= lstn->pollct) lstn->pollct = i + 1;
     lstn->pollfds[i].fd = -1;
-    sock->pollfn(sock, &lstn->pollfds[i]);
+    /* before pollfn: a FIFO that opened with no reader restarts at once,
+       and finds its pollfd by listenidx */
     sock->listenidx = i;
+    sock->pollfn(sock, &lstn->pollfds[i]);
     return lstn->socks[i] = sock;
 }
 

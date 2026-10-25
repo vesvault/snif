@@ -126,9 +126,12 @@ snif_cluster_enqueue("auth/$cn.auth");
 header("HTTP/1.0 202 Accepted");
 
 set_time_limit(2);
-$fd = fopen("$BaseDir/var/snif-certd.ctl", "w");
-stream_set_blocking($fd, false);
+# Non-blocking ("n"), as in snif-cert.php: with no snif-certd reading the pipe
+# the approval still answers 202 at once, and the connector's next certificate
+# request asks again.
+$fd = @fopen("$BaseDir/var/snif-certd.ctl", "wn");
 if ($fd) {
+    stream_set_blocking($fd, false);
     $buf = "SNIF CERT $cn\r\n";
     fwrite($fd, $buf, strlen($buf));
     fclose($fd);
