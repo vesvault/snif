@@ -1,5 +1,73 @@
 snif NEWS -- history of user-visible changes
 
+Version 1.10
+------------
+
+* ca-proxy: snifd runs as its own user, snifd, in group snif only. It
+  reads snif.conf and owns its pipes, and can write nothing else; it ran
+  as snif, which owns the CA proxy's keys and tree. Group snif is now
+  read-only: /etc/snif and etc/ (2750, was 2770). Writing the tree and
+  log/ takes the new group snif-rw, and snifd's pipes, which are relay
+  control, the new group snif-ctl, which the PHP's user is not in. The
+  install makes snifd, snif-rw and snif-ctl, copies a new .tsig as 0600
+  snif (it was 0640 root, read through group snif), and reports a key in
+  etc/ whose owner or mode is not as ca-proxy/README, "Users and groups",
+  says. Run as root, mkdirs now also sets the owner, group and mode of
+  what exists, and the install runs it after its chown -R, which had
+  taken snifd's pipes from snifd.
+
+* ca-proxy: the PHP endpoints get a user of their own, snif-www (group
+  snif, in snif-rw), made by the install, with an example PHP-FPM pool in
+  etc/php-fpm/snif.conf. Run them in it rather than as the web server's
+  user, which the README had added to snif, so that no other PHP on the
+  host can write the tree. On every run the install puts snif, snifd,
+  snif-apnsd, snif-www and an existing snif-peer in their groups, and
+  reports any other member of snif-rw or snif-ctl.
+
+  Upgrading a running relay, one node at a time: install; make the etc/
+  keys 0600 snif, apns.key 0600 snif-apnsd and turnstile.secret 0640
+  group snif-rw; then at once restart snif-relay, snif-certd, snif-syncd,
+  the snif-tunnel@ units and snif-apnsd where they run, and reload
+  PHP-FPM, since a process takes a new group only when it starts. Until
+  then the PHP and the peers' sessions cannot write, snifd cannot reopen
+  an input pipe, nor snif-apnsd its pipe. A PHP that runs as the web
+  server's user needs moving to snif-www, or that user in snif and
+  snif-rw.
+
+* ca-proxy: snif-apnsd runs as its own user, snif-apnsd, in its own group
+  and snif. It reads snifd's pushes, which carry what connectors send,
+  and held every CA proxy key as snif. Now it reads only its pipe
+  (snifd-out-apnsd.ctl, group snif-apnsd) and the APNs key, and writes
+  only apns/ and each sync-queue/<peer>/apns/, which mkdirs makes for it.
+  It logs to its log file where it can write it, else to stderr, which
+  is the journal as snif-apnsd; and it logs a wake token it cannot queue
+  for a peer, which it dropped silently. Without snif-rw it does not wake
+  snif-syncd, which sends the token at its next queue scan, within a
+  minute.
+
+* snifdog: runs as its own user, snifdog, and owns its state, which no
+  group can write any more (pins/ and the state directory were 2775
+  group snif). On a relay host it is in group snif, for snif.conf, its
+  configurations and etc/*.domains; a standalone watcher gets its own
+  group. An install over an older one gives the state to snifdog.
+
+* snifdog: the install configures and runs nothing. A first install put
+  an example /etc/snif/snifdog.conf, which watches snif.xyz, and
+  /etc/cron.d/snifdog, which ran at once; both now go to
+  /usr/share/snifdog/ as examples (snifdog.conf.example,
+  cron.d-snifdog.example). Write one configuration per base in
+  /etc/snif/snifdog.d/, then enable snifdog@<base>, or copy the cron
+  entry. Files an older install put in /etc are kept: remove the cron
+  entry if you use the units, or change its user to snifdog.
+
+* ca-proxy: on a node of a relay cluster, the init origin answered 503
+  for a name that cannot be a hostname, such as the paths scanners try
+  (/.env, /admin/.env): it asked snif-syncd, which refuses such a path,
+  and took the refusal for peers it could not ask. snif-auth.php now
+  checks the name first, as snif-cert.php does, and answers 404, as a
+  single relay always has; URL text that is not a name, a decoded
+  newline included, no longer reaches snif-syncd.
+
 Version 1.09
 ------------
 

@@ -33,11 +33,8 @@ Install snifd and libsnif from the top directory first, then the relay
     tree's pipes, and snif-tunnel, beside the CA proxy daemons.
 
 The two installs make what is missing of:
-    - the snif user and group: a system user with no login, home
-      /var/lib/snif. An existing snif user is left as it is. The daemons
-      run as snif. Add the web server's user (e.g. www-data) to the snif
-      group: the PHP endpoints write the CSRs, the approvals and the
-      daemons' pipes, and read etc/.
+    - the users and groups below, "Users and groups". An existing snif
+      user is kept, and added to snif-rw and snif-ctl.
     - /etc/snif/snif.conf, read by snifd and the daemons.
     - /var/lib/snif/ca-proxy, the CA proxy tree: the code (inc/,
       public_html/, secure_html/), the runtime directories and pipes
@@ -58,17 +55,71 @@ Installing again replaces the code and the units, and keeps snif.conf,
     the per-domain settings, so its example files are copied only where
     absent. A code directory that the tree links elsewhere, such as a
     release root, is left alone. With DESTDIR the install is staged, e.g.
-    for a package: no user is made, nothing is chowned and systemd is not
-    reloaded.
+    for a package: no user or group is made, nothing is chowned and
+    systemd is not reloaded.
 
 mkdirs [base-dir] makes the runtime directories and pipes that are missing,
     under base-dir, else SNIF_CA_PROXY from /etc/snif/snif.conf. The
     install runs it. Run it again after SNIF_CLUSTER_PEERS changes, for
-    each peer's pipes and queue: as root it gives what it makes to snif,
-    otherwise run it as snif.
+    each peer's pipes and queue. Run it as root: it also sets the owner,
+    group and mode of every directory and pipe it knows, as below, which
+    repairs them. Run as snif it can only make what is missing, and a pipe
+    it makes is snif's, which snifd cannot open.
+
+Users and groups. snifd faces the internet and the PHP endpoints take
+    requests from it, so neither has the CA proxy's keys, and the PHP cannot
+    steer the relay:
+    - snif: a system user with no login, home /var/lib/snif. Runs the CA
+      proxy daemons (snif-certd, snif-syncd, snif-tunnel) and owns the
+      tree and etc/. In groups snif, snif-rw and snif-ctl.
+    - snifd: a system user with no login and no home, in group snif only.
+      Runs snifd (snif-relay). It reads snif.conf and owns its pipes, and
+      can write nothing else.
+    - snif-apnsd: a system user with no login and no home, in its own
+      group and snif. Runs snif-apnsd, which reads snifd's pushes, and so
+      what connectors send. It reads snifd-out-apnsd.ctl and the APNs key,
+      and writes apns/ and each sync-queue/<peer>/apns/ (group snif-apnsd),
+      nothing else. It is in neither snif-rw nor snif-ctl, so it cannot
+      reach log/ and logs to the journal, and it does not wake snif-syncd,
+      which sends its tokens at its next queue scan, within a minute.
+    - snif-www: a system user with no login and no home, group snif, in
+      snif-rw. The PHP endpoints' user: they write the CSRs, approvals,
+      settings and sync queues, and snif-certd's pipe, use snif-syncd's
+      socket, and read etc/. Run them as snif-www in a PHP-FPM pool of their
+      own (below), not as the web server's user.
+    - snif-peer, a cluster's (doc/cluster.md): made by the operator, in
+      snif, snif-rw (for snif-syncd's socket) and snif-ctl (for its input
+      pipe).
+    - group snif reads /etc/snif (2750) and etc/ (2750): snif.conf and the
+      per-domain settings. A low-trust group: snifd, snif-apnsd, snif-www,
+      snif-peer, and snifdog are in it.
+    - group snif-rw writes the tree (2775) and log/ (2770): the CSRs,
+      approvals, settings and sync queues, and snif-certd's pipe. snif,
+      snif-www and snif-peer are in it.
+    - group snif-ctl reaches snifd's pipes, which are relay control: an
+      input line can send a connector's service connection to any address,
+      and the out pipes carry client addresses. snif and snif-peer are in
+      it; snif-www and snif-apnsd are not.
+    - The keys in etc/ are 0600 snif: .tsig, .priv-ca and account.key, which
+      only snif-certd reads. The APNs key, apns.key (apns-dev.key for
+      development), is 0600 snif-apnsd. turnstile.secret, which the PHP
+      reads, is 0640 group snif-rw.
+    The install makes snif, snifd, snif-apnsd, snif-www, snif-rw and
+    snif-ctl, and on every run puts them, and snif-peer where it exists, in
+    the groups above. It removes no one, and reports any other member of
+    snif-rw or snif-ctl. Before 1.10 this README had the web server's user
+    added to snif: once the PHP runs as snif-www, take it out. A snif-peer
+    made after the install
+    needs the groups too (or install again). A process gets a new group at
+    its next start: restart the daemons and reload PHP-FPM after an install
+    that changed one.
 
 The web server is not configured by the install; see public_html/ and
-    secure_html/ below.
+    secure_html/ below. Hand the CA proxy's PHP to a PHP-FPM pool of its own
+    that runs as snif-www: etc/php-fpm/snif.conf is an example, not
+    installed. With mod_php, or the web server's default pool, the PHP runs
+    as the web server's user, which then needs snif and snif-rw, and every
+    other PHP and web server process on the host can write the tree.
 
 public_html/ is the HTTP root for catch-all SNIF domains
 
@@ -88,8 +139,9 @@ The openssl command line tool is required by bin/snif-certd for domains that
     issue from a local CA.
 
 etc/{SNIF_initialization_domain}.domains contains the list of {domain} names
-    to issue SNIF hosts as subdomains that are expected to point to CNAME
-    snif-pool.{domain}, and to be served by HTTP public.html/
+    to issue SNIF hosts as subdomains that are expected to point, by a
+    wildcard CNAME, to the pool name: snif-pool.{domain}, or a name several
+    domains share (doc/cluster.md 9). They are served by HTTP public.html/
 
     It also makes {SNIF_initialization_domain} an init origin for
     snif-certd. "SNIF CERT {SNIF_initialization_domain}" on its control pipe

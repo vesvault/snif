@@ -129,8 +129,13 @@ Configuration: namespace, CT source, mode, alert sinks. One configuration
 watches one base domain.
 .TP
 .I /etc/snif/snifdog.d/*.conf
-One configuration per base domain. The cron entry runs a pass for each, and
-for
+One configuration per base domain, written from
+.IR /usr/share/snifdog/snifdog.conf.example ;
+the install writes none. The cron entry
+.RI ( /usr/share/snifdog/cron.d-snifdog.example ,
+copied to
+.IR /etc/cron.d/snifdog )
+runs a pass for each, and for
 .I /etc/snif/snifdog.conf
 if it exists; in watch mode, run one
 .BI snifdog@ base .service

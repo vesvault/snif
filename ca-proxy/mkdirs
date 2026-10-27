@@ -23,15 +23,32 @@
 # **************************************************************************/
 
 # Create the runtime directories and control pipes the SNIF CA proxy daemons
-# and scripts expect. What exists is left as it is, so it can run again, for
-# example after SNIF_CLUSTER_PEERS changes.
+# and scripts expect, so it can run again, for example after
+# SNIF_CLUSTER_PEERS changes. Run it as root: it also sets the owner, group
+# and mode of each one, new or not, which repairs a tree that an older
+# install or a chown -R left wrong. Run as snif, it only makes what is
+# missing, and a pipe it makes is snif's, which snifd cannot open.
 #
 #   mkdirs [base-dir]
 #
 # The base dir is the argument, else SNIF_CA_PROXY from /etc/snif/snif.conf
 # (the same one the daemons read), else this script's own directory.
-# The daemons run as snif and own their pipes: run as root, it gives what it
-# creates to snif; otherwise run it as snif.
+#
+# Who gets what (README, "Users and groups"):
+#   - The directories: snif, group snif-rw. The CA proxy daemons, the PHP
+#     endpoints and snif-peer write them.
+#   - var/snif-certd.ctl: snif, group snif-rw. snif-certd reads it, the PHP
+#     writes it.
+#   - snifd's pipes: snifd, group snif-ctl. snifd reads its inputs and
+#     writes its outputs. The tunnels, as snif, read the out-peer pipes, and
+#     snif-peer writes a peer's input. The PHP is not in snif-ctl, so it
+#     cannot steer the relay.
+#   - snif-apnsd's: snifd-out-apnsd.ctl is snifd's, group snif-apnsd, which
+#     only snif-apnsd reads; apns/ and each sync-queue/<peer>/apns/ are
+#     snif's, group snif-apnsd, so snif-apnsd writes there and nowhere else.
+# A user that does not exist is replaced by snif, and so is a group, after
+# any fallback listed with it (snif-apnsd,snif-rw). A symlink, such as log/,
+# is left as it is.
 
 BASE=$1
 for f in /etc/snif/snif.conf /etc/snif.conf; do
@@ -39,14 +56,23 @@ for f in /etc/snif/snif.conf /etc/snif.conf; do
 done
 SNIF_DIR="${BASE:-${SNIF_CA_PROXY:-$(dirname "$0")}}"
 
-own() {
-    if [ "$(id -u)" = 0 ] && id -u snif >/dev/null 2>&1; then chown snif:snif "$1"; fi
+own() {	# own <user> <group>[,<fallback>...] <mode> <path>
+    local u=$1 g=snif x
+    [ "$(id -u)" = 0 ] && id -u snif >/dev/null 2>&1 || return 0
+    [ -L "$4" ] && return 0
+    id -u $u >/dev/null 2>&1 || u=snif
+    for x in $(echo $2 | tr , ' '); do
+	getent group $x >/dev/null && { g=$x; break; }
+    done
+    chown $u:$g "$4" && chmod $3 "$4"
 }
-mkd() {	# mkd <mode> <dir>
-    [ -d "$SNIF_DIR/$2" ] || { mkdir -m $1 "$SNIF_DIR/$2" && own "$SNIF_DIR/$2"; }
+mkd() {	# mkd <mode> <dir> [<group>[,<fallback>...]]
+    [ -d "$SNIF_DIR/$2" ] || mkdir -m $1 "$SNIF_DIR/$2"
+    own snif ${3:-snif-rw} $1 "$SNIF_DIR/$2"
 }
-mkp() {	# mkp <mode> <fifo>
-    [ -p "$SNIF_DIR/$2" ] || { mkfifo -m $1 "$SNIF_DIR/$2" && own "$SNIF_DIR/$2"; }
+mkp() {	# mkp <user> <group> <mode> <fifo>
+    [ -p "$SNIF_DIR/$4" ] || mkfifo -m $3 "$SNIF_DIR/$4"
+    own $1 $2 $3 "$SNIF_DIR/$4"
 }
 
 mkd 02775 crt
@@ -55,18 +81,20 @@ mkd 02775 cfg
 mkd 02775 auth
 mkd 02755 arc
 mkd 02755 var
-mkd 02775 apns
+mkd 02775 apns snif-apnsd,snif-rw
 mkd 02775 log
 mkd 02775 sync-queue
 
-mkp 0620 var/snif-certd.ctl
-mkp 0620 var/snifd-in.ctl
-mkp 0640 var/snifd-out-apnsd.ctl
+mkp snif snif-rw 0620 var/snif-certd.ctl
+mkp snifd snif-ctl 0620 var/snifd-in.ctl
+mkp snifd snif-apnsd,snif-ctl 0640 var/snifd-out-apnsd.ctl
 
-# A relay cluster node (doc/cluster.md): a FIFO pair and a queue per peer.
+# A relay cluster node (doc/cluster.md): a FIFO pair and a queue per peer,
+# with the queue's apns/ made here, since snif-apnsd cannot write the queue.
 for p in $SNIF_CLUSTER_PEERS; do
     n=${p%%=*}
-    mkp 0620 var/snifd-out-peer-$n.ctl
-    mkp 0620 var/snifd-in-peer-$n.ctl
+    mkp snifd snif-ctl 0640 var/snifd-out-peer-$n.ctl
+    mkp snifd snif-ctl 0620 var/snifd-in-peer-$n.ctl
     mkd 02775 sync-queue/$n
+    mkd 02775 sync-queue/$n/apns snif-apnsd,snif-rw
 done

@@ -72,7 +72,13 @@ if ($cn == '') {
     exit;
 }
 
-if (!snif_cluster_have("cfg/$cn.cfg")) {
+# A name that cannot be a hostname (what scanners try: .env, admin/.env) has
+# no cfg anywhere: 404, as on a single relay, checked as snif-cert.php checks
+# its name. Asked for one, snif-syncd refuses the path, and a cluster node took
+# that for peers it could not ask: 503. PATH_INFO is decoded, so the check also
+# keeps a newline out of the requests to snif-syncd, one per line ("D": a "$"
+# that ends the name, not one before a trailing newline).
+if (!preg_match('/^\w([\.\-]?\w)*$/D', $cn) || !snif_cluster_have("cfg/$cn.cfg")) {
     header("HTTP/1.0 404 Not Found");
     exit;
 }

@@ -5,8 +5,9 @@
 # from a throwaway local CA (no network), and snif-syncd. Enrols a device
 # across the two nodes, then checks that neither node accepts a CSR alone when
 # a snif-syncd is down, that a tree without etc/cluster.node behaves as a
-# single relay always has, and that a CA proxy with no snif-certd running
-# answers at once.
+# single relay always has, that a CA proxy with no snif-certd running
+# answers at once, and that a cluster node, like a single relay, answers 404
+# for a name that cannot be a hostname.
 #
 #   perl ca-proxy/test/cluster.t
 #
@@ -203,6 +204,18 @@ sleep 0.5;
 ($code) = http('GET', "http://127.0.0.1:$Port{s}[0]/snif-cert/$cn5.crt", $cn5);
 waitpid($rd, 0);
 check($code eq '503' && (slurp("$T/s.ctl") // '') eq "SNIF CERT $cn5\r\n", "with a reader: 503, and it reads SNIF CERT <name> ($code)");
+
+# 9. The init origin, asked for a name that cannot be a hostname (what scanners
+# try: /.env, /admin/.env): 404 on a cluster node, as on a single relay. The
+# node asked snif-syncd, which refuses such a path, and answered 503 as if its
+# peers could not be asked. A decoded newline must not reach snif-syncd either.
+foreach my $p ('.env', 'admin/.env', 'phpinfo.php~', 'x%0ASTATUS', 'x%0A') {
+    my ($ca) = http('GET', "http://127.0.0.1:$Port{a}[1]/snif-auth.php/$p", 'init.test');
+    my ($cs) = http('GET', "http://127.0.0.1:$Port{s}[1]/snif-auth.php/$p", 'init.test');
+    check($ca eq '404' && $cs eq '404', "/$p on the origin: 404 on a cluster node and on a single relay ($ca, $cs)");
+}
+($code) = http('GET', "http://127.0.0.1:$Port{a}[1]/snif-auth.php/nosuch.lca.test", 'init.test');
+check($code eq '404', "a name that can be one but is nowhere: 404 after asking the peer ($code)");
 
 if ($fail) {
     foreach my $f (map { ("$T/$_/syncd.log", "$T/$_/log/log_snif-certd", "$T/$_/php.log") } qw(a b)) {

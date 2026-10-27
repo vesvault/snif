@@ -271,20 +271,27 @@ snifdog_etcdir = /etc/snif
 snifdog_basedir = /var/lib/snif/snifdog
 dist_snifdog_base_DATA = README
 systemdunitdir = /lib/systemd/system
-crondir = /etc/cron.d
+snifdog_sharedir = /usr/share/snifdog
 EXTRA_DIST = DESIGN.md etc/snifdog.conf etc/systemd/snifdog.service etc/systemd/snifdog@.service \
 	etc/cron.d/snifdog mkdirs test/state.t
 
 
-# The state directories and the units are made or replaced. The example
-# snifdog.conf and the cron.d entry go in only on a first install, when no
-# configuration exists: an operator who moved snifdog.conf into snifdog.d,
-# or chose the watch units and removed the cron entry, keeps that choice.
-# Only a root install without DESTDIR makes the snif user, chowns to it and
-# reloads systemd. A staged (DESTDIR) install, e.g. for a package, gets
+# The state directories and the units are made or replaced, and no unit is
+# enabled. The example configuration and cron entry go to
+# /usr/share/snifdog/, never to /etc: nothing runs until an operator writes
+# a configuration in /etc/snif/snifdog.d/ and enables snifdog@<base>, or
+# copies the cron entry. A configuration or cron entry that an older install
+# put in /etc is left as it is.
+# snifdog runs as its own user, snifdog, and owns its state, which no group
+# can write: what it watches cannot change its pins. On a relay host it is
+# in group snif, the CA proxy's read-only group (ca-proxy/README, "Users and
+# groups"), for snif.conf, its configurations and etc/*.domains; csr/ is
+# readable by all. A standalone watcher gets a group of its own.
+# Only a root install without DESTDIR makes the snifdog user, chowns to it
+# and reloads systemd. A staged (DESTDIR) install, e.g. for a package, gets
 # everything else.
 ROOT_INSTALL = [ -z "$(DESTDIR)" ] && [ "$$(id -u)" = 0 ]
-SNIF_OWNS = $(ROOT_INSTALL) && id -u snif >/dev/null 2>&1
+SNIFDOG_OWNS = $(ROOT_INSTALL) && id -u snifdog >/dev/null 2>&1
 all: all-am
 
 .SUFFIXES:
@@ -755,27 +762,21 @@ uninstall-man: uninstall-man8
 
 
 install-data-hook:
-	if $(ROOT_INSTALL) && ! id -u snif >/dev/null 2>&1; then \
+	if $(ROOT_INSTALL) && ! id -u snifdog >/dev/null 2>&1; then \
 	    if command -v useradd >/dev/null; then \
-		useradd -r -M -d /var/lib/snif -s "$$(command -v nologin || echo /bin/false)" \
-		    $$(getent group snif >/dev/null && echo '-g snif' || echo -U) snif; \
-	    else echo "No useradd here: make the snif user and group by hand." >&2; fi; \
+		useradd -r -M -d $(snifdog_basedir) -s "$$(command -v nologin || echo /bin/false)" \
+		    $$(getent group snif >/dev/null && echo '-g snif' || echo -U) snifdog || exit 1; \
+	    else echo "No useradd here: make the snifdog user by hand, in group snif on a relay host." >&2; fi; \
 	fi
-	if [ ! -e "$(DESTDIR)$(snifdog_etcdir)/snifdog.conf" ] && \
-	    ! ls "$(DESTDIR)$(snifdog_etcdir)"/snifdog.d/*.conf >/dev/null 2>&1; then \
-	    $(MKDIR_P) "$(DESTDIR)$(snifdog_etcdir)" && \
-	    $(INSTALL_DATA) $(srcdir)/etc/snifdog.conf "$(DESTDIR)$(snifdog_etcdir)/" && \
-	    if [ -n "$(DESTDIR)" ] || [ -d $(crondir) ]; then \
-		$(MKDIR_P) "$(DESTDIR)$(crondir)" && \
-		$(INSTALL_DATA) $(srcdir)/etc/cron.d/snifdog "$(DESTDIR)$(crondir)/"; \
-	    fi; \
-	fi
+	$(MKDIR_P) "$(DESTDIR)$(snifdog_sharedir)" "$(DESTDIR)$(snifdog_etcdir)"
+	$(INSTALL_DATA) $(srcdir)/etc/snifdog.conf "$(DESTDIR)$(snifdog_sharedir)/snifdog.conf.example"
+	$(INSTALL_DATA) $(srcdir)/etc/cron.d/snifdog "$(DESTDIR)$(snifdog_sharedir)/cron.d-snifdog.example"
 	[ -d "$(DESTDIR)$(snifdog_etcdir)/snifdog.d" ] || mkdir -m 0755 "$(DESTDIR)$(snifdog_etcdir)/snifdog.d"
-	[ -d "$(DESTDIR)$(snifdog_basedir)/pins" ] || mkdir -m 02775 "$(DESTDIR)$(snifdog_basedir)/pins"
-	[ -d "$(DESTDIR)$(snifdog_basedir)/var" ] || mkdir -m 02755 "$(DESTDIR)$(snifdog_basedir)/var"
-	[ -d "$(DESTDIR)$(snifdog_basedir)/evidence" ] || mkdir -m 02755 "$(DESTDIR)$(snifdog_basedir)/evidence"
-	chmod 02775 "$(DESTDIR)$(snifdog_basedir)"
-	if $(SNIF_OWNS); then chown -R snif:snif $(snifdog_basedir); fi
+	[ -d "$(DESTDIR)$(snifdog_basedir)/pins" ] || mkdir -m 0755 "$(DESTDIR)$(snifdog_basedir)/pins"
+	[ -d "$(DESTDIR)$(snifdog_basedir)/var" ] || mkdir -m 0755 "$(DESTDIR)$(snifdog_basedir)/var"
+	[ -d "$(DESTDIR)$(snifdog_basedir)/evidence" ] || mkdir -m 0755 "$(DESTDIR)$(snifdog_basedir)/evidence"
+	chmod -R g-ws,o-w "$(DESTDIR)$(snifdog_basedir)"
+	if $(SNIFDOG_OWNS); then chown -R snifdog: $(snifdog_basedir); fi
 	if [ -n "$(DESTDIR)" ] || [ -d $(systemdunitdir) ]; then \
 	    $(MKDIR_P) "$(DESTDIR)$(systemdunitdir)" && \
 	    $(INSTALL_DATA) $(srcdir)/etc/systemd/snifdog.service $(srcdir)/etc/systemd/snifdog@.service "$(DESTDIR)$(systemdunitdir)/"; \

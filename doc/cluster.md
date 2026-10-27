@@ -88,7 +88,9 @@ Requirements:
 
   `ca-proxy/bin/snif-relay` already hands every `var/snifd-out*.ctl` and
   `var/snifd-in*.ctl` to snifd. They sit beside the existing peripheral FIFOs
-  such as `snifd-out-apnsd.ctl`, and snifd treats both kinds alike.
+  such as `snifd-out-apnsd.ctl`, and snifd treats both kinds alike. They
+  are `snifd`'s, group `snif-ctl` (`ca-proxy/mkdirs`): the tunnel reads the
+  out FIFO as `snif`, and `snif-peer` writes the in FIFO.
 - **Every served name resolves through the pool name** (section 9): device
   hostnames, the init origin, and sites served through the static map (`-m`).
 
@@ -202,12 +204,15 @@ Three nodes make 12 ssh connections in all, and five make 40.
   protocol over stdin and stdout (section 7.3). A node sends its requests on
   its own outgoing sessions and answers each peer's on that peer's incoming
   one.
-- **Account:** `snif-peer`, a member of the CA proxy's group, since the CA
-  proxy directories are group-writable (`ca-proxy/mkdirs`).
+- **Account:** `snif-peer`, in the CA proxy's groups (`ca-proxy/README`,
+  "Users and groups"): `snif` to read `snif.conf` and `etc/`, `snif-rw` for
+  `snif-syncd`'s socket (`snif-syncd --serve` only relays the session to the
+  daemon, which writes the tree), and `snif-ctl` for the in FIFO.
   - Shell `/bin/sh`, because forced commands run through it. No password.
   - One key per peer per forced command.
-  - The install makes only `snif`. The operator makes `snif-peer`, its
-    keys and the sshd settings that confine it.
+  - The install makes `snif`, `snifd` and the groups, and puts an existing
+    `snif-peer` in its groups on every run. The operator makes `snif-peer`,
+    its keys and the sshd settings that confine it.
 - **Network:** chosen by the operator. ssh authenticates and encrypts on any
   path. A private network between the nodes keeps port 22 off their public
   interfaces.
@@ -684,7 +689,7 @@ directories equal to its listed peers, so queuing needs no running daemon.
 | `ca-proxy/bin/snif-relay`, `etc/snif.conf` | New settings `SNIF_CLUSTER_NODE`, `SNIF_CLUSTER_PEERS` (each peer's node name and address), `SNIF_CLUSTER_LEASE`; `SNIF_RELAY_SRV` names this node. `snif-relay` itself needs no change |
 | `snifd/fifo.c`, `snifd/host.c`, `snifd/ctl.c` | Hold a `CONNECT` for a host with no control connection here; drop it on `CLEAR`, `CLOSE` or the client timeout, with a cap; `snif_ctl_sethost` sends the held lines (section 2.1). Optional: drop a `CONNECT` from an input FIFO that names an unknown service address |
 | `snifd/sock.c` | A connect timeout per address in `snif_sock_connect` (**default** 5 s), instead of a blocking connect (section 9) |
-| snifdog | One config per base domain, in `/etc/snif/snifdog.d/`; the cron job runs a `snifdog poll` pass for every config in the directory. A config there defaults its state directory to `/var/lib/snif/snifdog/<base>`, and a pass takes a lock on its state directory, since today nothing stops two passes sharing state. The existing `/etc/snif/snifdog.conf` keeps working as before. It runs on each node |
+| snifdog | One config per base domain, in `/etc/snif/snifdog.d/`, each run by its own `snifdog@<base>` unit, or by the example cron entry (`/usr/share/snifdog/`), which runs a `snifdog poll` pass for every config in the directory. A config there defaults its state directory to `/var/lib/snif/snifdog/<base>`, and a pass takes a lock on its state directory, since today nothing stops two passes sharing state. The existing `/etc/snif/snifdog.conf` keeps working as before. It runs on each node |
 | New | `ca-proxy/bin/snif-syncd` and its unit; `ca-proxy/inc/snif-cluster.php`; `ca-proxy/bin/snif-tunnel <peer>` and the template unit `snif-tunnel@<peer>.service`, one instance per peer |
 | Tests | `snifd/test/held.sh`, `snifd/test/conntmout.sh`, `ca-proxy/test/syncd.t` (three nodes), `ca-proxy/test/cluster.t` (two nodes end to end, with the PHP and a local CA), and new cases in `certd-dns.t` and `apnsd.t` |
 
@@ -700,15 +705,17 @@ addresses are static: every node's address is published, and a client that
 cannot reach one tries the next. So the worst a DNS failure can cause is a
 refused validation, which `snif-certd` retries.
 
-- **The pool name gets its own zone,** `snif-pool.<base>` of one base domain,
-  delegated from its parent.
+- **The pool name gets its own zone,** delegated from its parent:
+  `snif-pool.<base>` of one base domain, or a name outside every base domain.
+  The second keeps the delegation and the update key out of the device
+  zones; the VES relay uses `snif.snif.host`.
   - It holds the nodes' addresses, which are static, and the challenge values,
     which are dynamic.
   - Every `_acme-challenge.<device>.<base>` reaches it through the wildcard
     alias.
-  - The parent changes only when a node is added or removed. The parent's
-    existing records at the pool name (today an A record and the challenge
-    TXT records) move into the new zone.
+  - The parent changes only when a node is added or removed. If the pool name
+    already has records in the parent (an A record and the challenge TXT
+    records, for `snif-pool.<base>`), they move into the new zone.
 - **Several base domains share it.** Each base's wildcard points at the same
   pool name (`*.<other base> CNAME snif-pool.<base>`), so every base's
   challenge values land in one record set. That causes no conflict:

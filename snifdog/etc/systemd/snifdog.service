@@ -4,8 +4,7 @@ After=network-online.target
 Wants=network-online.target
 
 [Service]
-User=snif
-Group=snif
+User=snifdog
 ExecStart=/usr/bin/snifdog watch
 Restart=on-failure
 RestartSec=30

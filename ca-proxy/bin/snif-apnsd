@@ -115,7 +115,8 @@ sub sync_enqueue {
     return if !-e "$EtcDir/cluster.node";
     foreach my $q (grep { -d } glob("$BaseDir/sync-queue/*")) {
 	mkdir "$q/apns", 02775 if !-d "$q/apns";
-	symlink("$BaseDir/$rel", "$q/$rel");
+	symlink("$BaseDir/$rel", "$q/$rel") || $!{EEXIST}
+	    || dlog(STDERR, "cannot queue $rel in $q: $! (run mkdirs as root after a peer is added)");
     }
     require IO::Socket::UNIX;
     if (my $s = IO::Socket::UNIX->new(Peer => "$BaseDir/var/snif-syncd.sock", Type => Socket::SOCK_STREAM())) {
@@ -149,8 +150,12 @@ sub dlog {
 # Loaded rather than run (e.g. by a test with do/require): define the subs only.
 return 1 if caller;
 
-close STDERR;
-open STDERR, ">>$LogDir/log_snif-apnsd";
+# The log file where it can be written, else stderr, which systemd sends to
+# the journal: as the snif-apnsd user, which is not in snif-rw, it cannot
+# reach log/ (README, "Users and groups").
+if (open(my $log, '>>', "$LogDir/log_snif-apnsd")) {
+    open(STDERR, '>&', $log);
+}
 select STDERR;
 $| = 1;
 dlog(STDERR, "starting snif-apnsd");

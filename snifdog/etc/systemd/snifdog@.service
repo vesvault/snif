@@ -9,8 +9,7 @@ After=network-online.target
 Wants=network-online.target
 
 [Service]
-User=snif
-Group=snif
+User=snifdog
 Environment=SNIFDOG_CONF=/etc/snif/snifdog.d/%i.conf
 ExecStart=/usr/bin/snifdog watch
 Restart=on-failure

@@ -27,12 +27,17 @@
 # /etc/snif/snifdog.d/*.conf. A configuration's base dir is its SNIFDOG_DIR,
 # else what bin/snifdog defaults to: /var/lib/snif/snifdog for snifdog.conf,
 # /var/lib/snif/snifdog/<base> for the others. With no configuration at all,
-# fall back to this script's own directory.
+# fall back to this script's own directory. They are snifdog's and no group
+# can write them: run as root, it gives them to snifdog; otherwise run it as
+# snifdog. snifdog also makes them itself when they are missing.
 
 mkstate() {
-    mkdir -p -m 02775 "$1/pins"
-    mkdir -p -m 02755 "$1/var"
-    mkdir -p -m 02755 "$1/evidence"
+    mkdir -p -m 0755 "$1/pins"
+    mkdir -p -m 0755 "$1/var"
+    mkdir -p -m 0755 "$1/evidence"
+    if [ "$(id -u)" = 0 ] && id -u snifdog >/dev/null 2>&1; then
+	chown snifdog: "$1" "$1/pins" "$1/var" "$1/evidence"
+    fi
 }
 
 # Source a configuration the way bin/snifdog does: the relay conf first.

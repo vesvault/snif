@@ -4,8 +4,12 @@ After=network-online.target
 Wants=network-online.target
 
 [Service]
-User=snif
-Group=snif
+# Its own user, in group snif for snif.conf and etc/: it reads snifd's
+# pushes, which carry what connectors send, so it holds only the APNs key
+# and writes only apns/ and its sync-queue/<peer>/apns/ (ca-proxy/mkdirs).
+# It logs to the journal.
+User=snif-apnsd
+Group=snif-apnsd
 NoNewPrivileges=yes
 ExecStart=/usr/bin/snif-apnsd
 Restart=on-failure
