@@ -1,0 +1,14 @@
+# Runs snif-arc once a day, on every relay node:
+#     systemctl enable --now snif-arc.timer
+# A run missed while the host was down runs at the next boot. Use this or the
+# cron entry (make install-cron), not both.
+
+[Unit]
+Description=Daily SNIF CA Proxy certificate archive (snif-arc)
+
+[Timer]
+OnCalendar=*-*-* 04:17:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target

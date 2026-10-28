@@ -203,7 +203,8 @@ INSTALL / RUN
       systemctl enable --now snifdog@snif.xyz
 
   or from cron, snifdog poll every 15 minutes for every configuration,
-  by copying the example cron entry to /etc/cron.d/snifdog -- not both.
+  by make install-cron, which puts the cron entry in /etc/cron.d/snifdog
+  where absent -- not both.
   /etc/snif/snifdog.conf, from before snifdog.d, still works: snifdog.service
   runs it, and the cron entry includes it.
 

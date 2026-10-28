@@ -11,6 +11,7 @@ snifdog_basedir = /var/lib/snif/snifdog
 dist_snifdog_base_DATA = README
 
 systemdunitdir = /lib/systemd/system
+crondir = /etc/cron.d
 snifdog_sharedir = /usr/share/snifdog
 
 EXTRA_DIST = DESIGN.md etc/snifdog.conf etc/systemd/snifdog.service etc/systemd/snifdog@.service \
@@ -20,7 +21,7 @@ EXTRA_DIST = DESIGN.md etc/snifdog.conf etc/systemd/snifdog.service etc/systemd/
 # enabled. The example configuration and cron entry go to
 # /usr/share/snifdog/, never to /etc: nothing runs until an operator writes
 # a configuration in /etc/snif/snifdog.d/ and enables snifdog@<base>, or
-# copies the cron entry. A configuration or cron entry that an older install
+# runs make install-cron. A configuration or cron entry that an older install
 # put in /etc is left as it is.
 # snifdog runs as its own user, snifdog, and owns its state, which no group
 # can write: what it watches cannot change its pins. On a relay host it is
@@ -54,3 +55,21 @@ install-data-hook:
 	    $(INSTALL_DATA) $(srcdir)/etc/systemd/snifdog.service $(srcdir)/etc/systemd/snifdog@.service "$(DESTDIR)$(systemdunitdir)/"; \
 	fi
 	if $(ROOT_INSTALL) && [ -d /run/systemd/system ]; then systemctl daemon-reload || true; fi
+
+# The cron entry, instead of the snifdog@ units: it goes in where absent, and
+# an existing one is kept. It runs nothing without a cron daemon, which is
+# reported.
+install-cron:
+	if [ -e "$(DESTDIR)$(crondir)/snifdog" ]; then \
+	    echo "$(crondir)/snifdog exists: kept"; \
+	else \
+	    $(MKDIR_P) "$(DESTDIR)$(crondir)" && \
+	    $(INSTALL_DATA) $(srcdir)/etc/cron.d/snifdog "$(DESTDIR)$(crondir)/" || exit 1; \
+	fi
+	if [ -z "$(DESTDIR)" ]; then \
+	    PATH="$$PATH:/usr/sbin:/sbin"; \
+	    command -v cron >/dev/null || command -v crond >/dev/null || \
+		echo "No cron daemon here: $(crondir)/snifdog runs nothing until one is installed" >&2; \
+	fi
+
+.PHONY: install-cron

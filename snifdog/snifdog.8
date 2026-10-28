@@ -133,8 +133,10 @@ One configuration per base domain, written from
 .IR /usr/share/snifdog/snifdog.conf.example ;
 the install writes none. The cron entry
 .RI ( /usr/share/snifdog/cron.d-snifdog.example ,
-copied to
-.IR /etc/cron.d/snifdog )
+put in
+.I /etc/cron.d/snifdog
+by
+.BR "make install-cron" )
 runs a pass for each, and for
 .I /etc/snif/snifdog.conf
 if it exists; in watch mode, run one

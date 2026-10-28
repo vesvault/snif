@@ -41,14 +41,17 @@ The two installs make what is missing of:
       (mkdirs below), etc/ linked to /etc/snif/ca-proxy and log/ linked to
       /var/log/snif.
     - the programs in /usr/bin, and the units in /lib/systemd/system:
-      snif-relay, snif-tunnel@, snif-certd, snif-apnsd and snif-syncd from
-      here, snif-conn from the top directory. None is enabled;
-      enable what the host runs, e.g. systemctl enable --now snif-relay
-      snif-certd.
-    - /etc/cron.d/snif-arc, which runs snif-arc daily (below), and
-      /etc/logrotate.d/snif for the daemons' logs. The per-domain
+      snif-relay, snif-tunnel@, snif-certd, snif-apnsd, snif-syncd and
+      snif-arc.timer (with snif-arc.service, below) from here, snif-conn
+      from the top directory. None is enabled; enable what the host runs,
+      e.g. systemctl enable --now snif-relay snif-certd snif-arc.timer.
+    - /etc/logrotate.d/snif for the daemons' logs. The per-domain
       log/{domain}.log files are not rotated: snif-certd reads their
       modification time as its one-hour retry throttle.
+
+    The cron entry for snif-arc, etc/cron.d/snif-arc, is not installed:
+    on a host without systemd, make install-cron puts it in
+    /etc/cron.d/snif-arc, where absent, in place of snif-arc.timer.
 
 Installing again replaces the code and the units, and keeps snif.conf,
     etc/, the cron and logrotate entries, the state and the logs. etc/ holds the DNS keys, the CA keys and
@@ -239,8 +242,11 @@ etc/{email}.ves-limit and etc/ves-limit (optional) limit the certificates a
 snif-certd daemon needs to be launched on the server start to process
     the certificate issuance for SNIF connectors.
 
-snif-arc needs to be launched periodically, once a day: the install adds
-    /etc/cron.d/snif-arc for that. It archives aging certificates: it moves any certificate older than
+snif-arc needs to run once a day: enable snif-arc.timer (systemctl enable
+    --now snif-arc.timer), or, without systemd, run make install-cron for
+    /etc/cron.d/snif-arc -- one of the two, not both. If neither runs it,
+    a certificate is served past 75 days instead of renewed and expires at
+    90. It archives aging certificates: it moves any certificate older than
     75 days out of crt/ into a dated folder under arc/. It does not reissue
     anything - removing the stale certificate is what lets snif-certd issue a
     fresh one the next time the connector requests it. A local-CA domain's
@@ -266,7 +272,10 @@ snif-syncd keeps the CA proxy state of a relay cluster in step across its
     command on the peer is "snif-syncd --serve <this node>". Writers queue
     files with "snif-syncd enqueue <path>"; "snif-syncd status", "reconcile"
     and "seed <peer>" talk to the running daemon. test/syncd.t runs three
-    nodes on one host.
+    nodes on one host. With SNIF_CLUSTER_JUDGE ("<zone>@<server>", key in
+    etc/<zone>.tsig, needs Net::DNS) a DNS zone on one nameserver gives the
+    deciding vote on a CSR while a node is down or cut off (doc/cluster.md
+    5.1); test/judge.t runs two nodes and a throwaway named.
 
 
 CONTENTS:

@@ -1,5 +1,38 @@
 snif NEWS -- history of user-visible changes
 
+Version 1.11
+------------
+
+* ca-proxy: snif-arc runs from a systemd timer, snif-arc.timer, daily at
+  04:17 as snif; a run missed while the host was down runs at the next
+  boot. The install puts it in with the other units and, like them, does
+  not enable it: enable it on every relay node (systemctl enable --now
+  snif-arc.timer). The cron entry is no longer installed, so a host
+  needs no cron daemon: make install-cron puts /etc/cron.d/snif-arc in,
+  where absent, for a host without systemd. On a host without a cron
+  daemon the entry ran nothing, and certificates were served past 75
+  days instead of renewed. An entry an older install put in /etc/cron.d
+  is kept and the install reports it: keep the timer or the entry, not
+  both.
+
+* ca-proxy: snif-syncd can take a judge, SNIF_CLUSTER_JUDGE=
+  <zone>@<server>[#<port>], so that a relay cluster keeps enrolling
+  devices while one node is down or cut off. A CSR then needs a majority
+  of the nodes and the judge together, two of three for two nodes;
+  without the setting it needs every listed peer, as before. The judge
+  is a DNS zone on one nameserver, written with TSIG (the key in
+  etc/<zone>.tsig; Net::DNS needed): its vote is a TXT record for the
+  name, added only where none exists, so of two nodes that cannot reach
+  each other exactly one gets a name. It is asked only while a peer does
+  not answer. A CSR accepted without a peer is queued for it and
+  delivered when the peer is back; until then that node's snifdog
+  reports the name. The zone name may start with an underscore.
+  doc/cluster.md 5.1 has the rules for the zone: on one server only,
+  never copied to a server that can be promoted, never reset.
+
+* snifdog: make install-cron puts the cron entry in /etc/cron.d/snifdog,
+  where absent, to run snifdog from cron instead of the snifdog@ units.
+
 Version 1.10
 ------------
 

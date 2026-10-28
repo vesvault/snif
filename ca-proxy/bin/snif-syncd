@@ -35,11 +35,15 @@
 #
 # Settings come from the environment, else /etc/snif.conf: SNIF_CA_PROXY,
 # SNIF_CLUSTER_NODE (this node's name), SNIF_CLUSTER_PEERS ("name=address ...",
-# the listed peers), SNIF_CLUSTER_LEASE (the certificate lease, seconds), and
+# the listed peers), SNIF_CLUSTER_LEASE (the certificate lease, seconds),
 # SNIF_CLUSTER_PEER_CMD (the command that opens a session to a peer; %n is
-# this node's name, %p the peer's name, %a its address).
+# this node's name, %p the peer's name, %a its address), and
+# SNIF_CLUSTER_JUDGE ("<zone>@<server>[#<port>]": a DNS zone on one
+# nameserver that decides a CSR when the peers that answer are not enough for
+# a majority, section 5.1). Without SNIF_CLUSTER_JUDGE a CSR needs every
+# listed peer, as before.
 #
-# Only core Perl modules are used.
+# Only core Perl modules are used, and Net::DNS with SNIF_CLUSTER_JUDGE.
 
 use strict;
 use warnings;
@@ -56,12 +60,21 @@ use Time::Local qw(timegm);
 
 our $VERSION = '1';
 
-my %Conf = conf(qw(SNIF_CA_PROXY SNIF_CLUSTER_NODE SNIF_CLUSTER_PEERS SNIF_CLUSTER_LEASE SNIF_CLUSTER_PEER_CMD));
+my %Conf = conf(qw(SNIF_CA_PROXY SNIF_CLUSTER_NODE SNIF_CLUSTER_PEERS SNIF_CLUSTER_LEASE SNIF_CLUSTER_PEER_CMD SNIF_CLUSTER_JUDGE));
 our $BaseDir = $Conf{SNIF_CA_PROXY};
 our $Node = $Conf{SNIF_CLUSTER_NODE};
 our %Peers = map { /^([^=]+)=(.*)$/ ? ($1 => $2) : () } split(' ', $Conf{SNIF_CLUSTER_PEERS} // '');
 our $PeerCmd = $Conf{SNIF_CLUSTER_PEER_CMD}
     || 'ssh -o BatchMode=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=3 snif-peer@%a';
+
+# The judge (section 5.1). Its TSIG key is etc/<zone>.tsig, as snif-certd's
+# are etc/<base>.tsig.
+our ($JudgeZone, $JudgeServer, $JudgePort, $JudgeKey);
+our $JudgeSetting = $Conf{SNIF_CLUSTER_JUDGE} // '';
+if ($JudgeSetting =~ /^\s*([A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*)\.?\@(?:\[([0-9A-Fa-f:.]+)\]|([^\s\@#\[\]]+))(?:#(\d+))?\s*$/) {
+    ($JudgeZone, $JudgeServer, $JudgePort) = (lc $1, $2 // $3, $4 || 53);
+    $JudgeKey = "$BaseDir/etc/$JudgeZone.tsig";
+}
 
 our $Sock = "$BaseDir/var/snif-syncd.sock";
 our $QueueDir = "$BaseDir/sync-queue";
@@ -253,6 +266,8 @@ sub conflict {
 our $Sel = IO::Select->new;
 our %Conn;		# fileno => connection (local clients, peer sessions relayed in)
 our %Sess;		# peer => outgoing session
+our %Judge;		# fileno => a judge request in a child (section 5.1)
+our %JudgeLast;		# the judge's last answer, for status: result, at
 our @Timers;		# [time, sub]
 our $Listener;
 
@@ -314,6 +329,7 @@ sub loop {
 	    purge_grants();
 	}
 	sess_tick();
+	judge_tick();
 	my $wait = @Timers ? $Timers[0][0] - time : 1;
 	$wait = 1 if $wait > 1;
 	$wait = 0 if $wait < 0;
@@ -331,6 +347,7 @@ sub loop {
 		$Sel->add($ns);
 		next;
 	    }
+	    if (my $j = $Judge{fileno $fh}) { judge_input($j); next }
 	    my $c = $Conn{fileno $fh} // sess_by_rfh($fh);
 	    next if !$c;
 	    my $n = sysread($fh, my $buf, 65536);
@@ -750,35 +767,44 @@ sub lease_release {
 
 # ---- CSRs (section 5) -----------------------------------------------------
 
+# With a judge, the lease is taken from the peers that answer (ALONE) and
+# csr_vote decides; without one, every listed peer must grant it and hold the
+# CSR (csr_to_peers).
+sub csr_lease_ok { my ($l) = @_; return $l eq 'GRANTED' || ($JudgeZone && $l eq 'ALONE') }
+
 sub csr_accept {
     my ($cn, $data, $cb) = @_;
-    lease_take("csr:$cn", $CSRLease, { wait => $CSRWait }, sub {
+    lease_take("csr:$cn", $CSRLease, { wait => $CSRWait, alone_ok => !!$JudgeZone }, sub {
 	my ($l) = @_;
-	return $cb->($l) if $l ne 'GRANTED';
+	return $cb->($l) if !csr_lease_ok($l);
 	my $done = sub { lease_release("csr:$cn"); $cb->($_[0]) };
 	my $mine = slurp("$BaseDir/csr/$cn.csr");
 	return $done->($mine eq $data ? 'SAME' : 'DIFFERENT') if defined $mine;
-	csr_to_peers($cn, $data, sub {
-	    my ($r) = @_;
+	($JudgeZone ? \&csr_vote : \&csr_to_peers)->($cn, $data, sub {
+	    my ($r, @owed) = @_;
 	    return $done->($r) if $r ne 'OK';
 	    return $done->('UNREACHABLE') if !lease_valid("csr:$cn");
 	    my $s = csr_store($cn, $data);
+	    enqueue_csr($cn, @owed) if @owed && ($s eq 'STORED' || $s eq 'SAME');
 	    $done->($s eq 'REJECT write' ? 'UNREACHABLE' : $s);
 	});
     });
 }
 
-# Before a first certificate: every listed peer holds our CSR.
+# Before a first certificate: every listed peer holds our CSR, or with a
+# judge, a majority of the nodes and the judge does.
 sub csr_ensure {
     my ($cn, $cb) = @_;
     my $data = slurp("$BaseDir/csr/$cn.csr");
     return $cb->('UNREACHABLE') if !defined $data;
-    lease_take("csr:$cn", $CSRLease, { wait => $CSRWait }, sub {
+    lease_take("csr:$cn", $CSRLease, { wait => $CSRWait, alone_ok => !!$JudgeZone }, sub {
 	my ($l) = @_;
-	return $cb->($l eq 'BUSY' ? 'UNREACHABLE' : $l) if $l ne 'GRANTED';
-	csr_to_peers($cn, $data, sub {
+	return $cb->($l eq 'BUSY' ? 'UNREACHABLE' : $l) if !csr_lease_ok($l);
+	($JudgeZone ? \&csr_vote : \&csr_to_peers)->($cn, $data, sub {
+	    my ($r, @owed) = @_;
 	    lease_release("csr:$cn");
-	    $cb->($_[0] eq 'OK' ? 'STORED' : $_[0]);
+	    enqueue_csr($cn, @owed) if $r eq 'OK' && @owed;
+	    $cb->($r eq 'OK' ? 'STORED' : $r);
 	});
     });
 }
@@ -797,6 +823,167 @@ sub csr_to_peers {
 	return $cb->('OK') if !grep { $_ ne 'STORED' && $_ ne 'SAME' } @a;
 	$cb->('UNREACHABLE');
     });
+}
+
+# With a judge (section 5.1): send our CSR to every peer that answers, and
+# count the votes for it: this node's, each peer's that holds it, and, only
+# when those are not a majority of the nodes and the judge together, the
+# judge's. $cb gets 'OK' and the listed peers that do not hold it yet,
+# 'DIFFERENT', or 'UNREACHABLE'.
+sub csr_vote {
+    my ($cn, $data, $cb) = @_;
+    my @peers = sort keys %Peers;
+    my @up = grep { sess_up($_) } @peers;
+    my $need = majority();
+    return $cb->('UNREACHABLE') if 1 + @up + 1 < $need;
+    my $sha = sha256_hex($data);
+    ask_all(\@up, sub { ("CSR $cn " . length($data) . " $sha\n", $data) }, sub {
+	my ($rs) = @_;
+	my %a = map { $_ => ($rs->{$_} ? $rs->{$_}[0] : '') } @up;
+	return $cb->('DIFFERENT') if grep { $_ eq 'DIFFERENT' } values %a;
+	my %hold = map { $_ => 1 } grep { $a{$_} eq 'STORED' || $a{$_} eq 'SAME' } @up;
+	my @owed = grep { !$hold{$_} } @peers;
+	return $cb->('OK', @owed) if 1 + keys(%hold) >= $need;
+	return $cb->('UNREACHABLE') if 1 + keys(%hold) + 1 < $need;
+	judge_ask($cn, $sha, sub {
+	    my ($j) = @_;
+	    return $cb->('UNREACHABLE') if !$j;
+	    return $cb->('DIFFERENT') if $j eq 'DIFFERENT';
+	    $cb->('OK', @owed);
+	});
+    });
+}
+
+# A CSR accepted without some listed peers is owed to them: a link in their
+# queue, delivered by csr_deliver when they answer again.
+sub enqueue_csr {
+    my ($cn, @peers) = @_;
+    foreach my $peer (@peers) {
+	my $entry = "$QueueDir/$peer/csr/$cn.csr";
+	(my $dir = $entry) =~ s{/[^/]+$}{};
+	make_path($dir, { mode => 02775 }) if !-d $dir;
+	symlink("$BaseDir/csr/$cn.csr", $entry) || $! == EEXIST || dlog("enqueue csr/$cn.csr for $peer: $!");
+    }
+    dlog("csr $cn: accepted without " . join(' ', @peers) . ", queued for them");
+}
+
+# Deliver an owed CSR from the queue: under a lease, as any CSR. A peer that
+# holds another CSR for the name is a conflict; one that does not answer
+# keeps it queued.
+sub csr_deliver {
+    my ($peer, $rel, $inflight) = @_;
+    my $s = $Sess{$peer};
+    (my $cn = $rel) =~ s{^csr/(.*)\.csr$}{$1};
+    my $data = slurp("$BaseDir/$rel");
+    if (!defined $data) {
+	dlog("queue $peer: $rel is gone, dropped");
+	unlink $inflight;
+	return queue_kick($peer);
+    }
+    $s->{putting} = 1;
+    lease_take("csr:$cn", $CSRLease, { wait => $CSRWait, alone_ok => 1 }, sub {
+	if (!csr_lease_ok($_[0])) {
+	    $s->{putting} = 0;
+	    return queue_requeue_one($peer, $rel);
+	}
+	csr_to_peers($cn, $data, sub {
+	    my ($r) = @_;
+	    lease_release("csr:$cn");
+	    $s->{putting} = 0;
+	    return queue_requeue_one($peer, $rel) if $r eq 'UNREACHABLE';
+	    conflict($rel, $peer) if $r eq 'DIFFERENT';
+	    unlink $inflight;
+	    queue_kick($peer);
+	}, [$peer]);
+    });
+}
+
+# ---- the judge (section 5.1) ------------------------------------------------
+#
+# One DNS zone on one nameserver. A CSR's record there, <cn>.<zone> TXT
+# <sha256>, is added only where none exists: an RFC 2136 prerequisite, which
+# the server checks and applies as one step, so the first CSR to reach it
+# holds the name. Every exchange is signed with the zone's TSIG key, and an
+# answer counts only if its signature verifies. A child makes the exchange,
+# so the loop never waits on the network.
+
+# The votes a CSR needs: a majority of the nodes and the judge together.
+sub majority { return int((scalar(keys %Peers) + 2) / 2) + 1 }
+
+# $cb gets 'SET' (no record, now ours), 'SAME' (ours already), 'DIFFERENT'
+# (another CSR's), or undef (no verified answer).
+sub judge_ask {
+    my ($cn, $sha, $cb) = @_;
+    pipe(my $rd, my $wr) || return $cb->(undef);
+    my $pid = fork;
+    if (!defined $pid) { close $rd; close $wr; return $cb->(undef) }
+    if (!$pid) {
+	close $rd;
+	my $r = eval { judge_exchange($cn, $sha) } // "ERROR $@";
+	$r =~ s/\s+/ /g;
+	syswrite($wr, "$r\n");
+	POSIX::_exit(0);
+    }
+    close $wr;
+    nonblock($rd);
+    $Judge{fileno $rd} = { fh => $rd, pid => $pid, rbuf => '', cb => $cb, cn => $cn, expire => time + 2 * $Deadline + 1 };
+    $Sel->add($rd);
+}
+
+# In the child: the update, and a second one, with no change, only to tell
+# SAME from DIFFERENT.
+sub judge_exchange {
+    my ($cn, $sha) = @_;
+    local $_;			# Net::DNS reads the key file with while (<>)
+    my $name = "$cn.$JudgeZone";
+    my $res = Net::DNS::Resolver->new(nameservers => [$JudgeServer], port => $JudgePort,
+	usevc => 1, tcp_timeout => $Deadline, recurse => 0);
+    # A key on the resolver, not on the packet: only then does Net::DNS
+    # verify the answers' signatures. It still passes an answer that has no
+    # signature at all (Net::DNS::Packet::verify), so that is refused here.
+    $res->tsig($JudgeKey);
+    my $ask = sub {
+	my ($prereq, @update) = @_;
+	my $u = Net::DNS::Update->new($JudgeZone, 'IN');
+	$u->push(prereq => $prereq);
+	$u->push(update => $_) foreach @update;
+	my $rs = $res->send($u) || return 'no answer (' . ($res->errorstring // '?') . ')';
+	return 'no answer (' . $rs->verifyerr . ')' if !$rs->sigrr || !$rs->verify($u);
+	return $rs->header->rcode;
+    };
+    my $rc = $ask->(Net::DNS::nxrrset("$name TXT"), Net::DNS::rr_add(qq($name 0 TXT "$sha")));
+    return 'SET' if $rc eq 'NOERROR';
+    return "ERROR $rc" if $rc ne 'YXRRSET';
+    $rc = $ask->(Net::DNS::yxrrset(qq($name TXT "$sha")));
+    return $rc eq 'NOERROR' ? 'SAME' : $rc eq 'NXRRSET' ? 'DIFFERENT' : "ERROR $rc";
+}
+
+sub judge_input {
+    my ($j) = @_;
+    my $n = sysread($j->{fh}, my $buf, 4096);
+    return if !defined $n && ($! == EAGAIN || $! == EINTR);
+    $j->{rbuf} .= $buf if $n;
+    return if $n && index($j->{rbuf}, "\n") < 0;
+    judge_done($j, $j->{rbuf} =~ /^([^\n]+)\n/ ? $1 : 'ERROR no reply');
+}
+
+sub judge_tick {
+    my $now = time;
+    foreach my $j (values %Judge) {
+	next if $j->{expire} > $now;
+	kill 'TERM', $j->{pid};
+	judge_done($j, 'ERROR timeout');
+    }
+}
+
+sub judge_done {
+    my ($j, $r) = @_;
+    $Sel->remove($j->{fh});
+    delete $Judge{fileno $j->{fh}};
+    close $j->{fh};
+    %JudgeLast = (result => $r, at => time);
+    dlog("judge $j->{cn}: $r");
+    $j->{cb}->($r =~ /^(SET|SAME|DIFFERENT)$/ ? $1 : undef);
 }
 
 # ---- FETCH (section 7.2) ---------------------------------------------------
@@ -850,7 +1037,7 @@ sub queue_kick {
 	my $entry = "$QueueDir/$peer/$rel";
 	my $inflight = "$QueueDir/$peer/.inflight/$rel";
 	my ($class) = classify($rel);
-	if (!$class || $class eq 'csr') {
+	if (!$class || ($class eq 'csr' && !$JudgeZone)) {
 	    dlog("queue $peer: refusing $rel");
 	    unlink $entry;
 	    next;
@@ -858,6 +1045,7 @@ sub queue_kick {
 	(my $idir = $inflight) =~ s{/[^/]+$}{};
 	make_path($idir) if !-d $idir;
 	next if !rename($entry, $inflight);
+	return csr_deliver($peer, $rel, $inflight) if $class eq 'csr';
 	my $data = slurp("$BaseDir/$rel");
 	if (!defined $data) {
 	    dlog("queue $peer: $rel is gone, dropped");
@@ -1034,6 +1222,8 @@ sub status_text {
 	my $st = $Sess{$p} ? $Sess{$p}{state} : 'down';
 	push @l, "peer $p $st queue=$n oldest=${age}s" . ($age > $HealthAge ? " STALE" : "");
     }
+    push @l, "judge $JudgeZone\@$JudgeServer" . ($JudgePort != 53 ? "#$JudgePort" : '') . " majority=" . majority()
+	. ($JudgeLast{at} ? sprintf(" last=%ds %s", time - $JudgeLast{at}, $JudgeLast{result}) : " last=none") if $JudgeZone;
     push @l, "conflict $_ from $Conflicts{$_}" foreach sort keys %Conflicts;
     push @l, "held " . scalar(grep { lease_valid($_) } keys %Held) . " granted " . scalar(grep { $Grant{$_}{expire} > time } keys %Grant);
     return join('', map { "$_\n" } @l) . "END\n";
@@ -1097,10 +1287,16 @@ die "usage: snif-syncd [--serve <node> | enqueue <path>... | status | reconcile 
 die "snif-syncd: SNIF_CLUSTER_NODE is not set\n" if !defined $Node || $Node !~ /^$NameRe$/;
 die "snif-syncd: no peers in SNIF_CLUSTER_PEERS\n" if !%Peers;
 foreach my $p (keys %Peers) { die "snif-syncd: bad peer name $p\n" if $p !~ /^$NameRe$/ || $p eq $Node }
+if ($JudgeSetting =~ /\S/) {
+    die "snif-syncd: SNIF_CLUSTER_JUDGE is not <zone>\@<server>[#<port>]\n" if !$JudgeZone;
+    eval { require Net::DNS; 1 } || die "snif-syncd: SNIF_CLUSTER_JUDGE needs Net::DNS (libnet-dns-perl)\n";
+    die "snif-syncd: SNIF_CLUSTER_JUDGE: cannot read $JudgeKey\n" if !-r $JudgeKey;
+}
 
 open(STDERR, '>>', $LogFile) if !$ENV{SNIF_SYNCD_STDERR};
 STDERR->autoflush(1);
-dlog("starting snif-syncd, node $Node, peers " . join(' ', sort keys %Peers));
+dlog("starting snif-syncd, node $Node, peers " . join(' ', sort keys %Peers)
+    . ($JudgeZone ? ", judge $JudgeZone\@$JudgeServer#$JudgePort" : ''));
 umask(0002);
 unlink $Sock;
 my $um = umask(0007);

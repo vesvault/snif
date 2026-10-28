@@ -1,0 +1,13 @@
+# snif-arc archives the SNIF certificates older than 75 days, so that
+# snif-certd issues a fresh one the next time the connector asks (README).
+# snif-arc.timer runs it daily; enable the timer, not this unit.
+
+[Unit]
+Description=SNIF CA Proxy certificate archive (snif-arc)
+
+[Service]
+Type=oneshot
+User=snif
+Group=snif
+NoNewPrivileges=yes
+ExecStart=/usr/bin/snif-arc

@@ -1,7 +1,9 @@
 # snif-arc -- archive the SNIF certificates older than 75 days, so that
 # snif-certd issues a fresh one the next time the connector asks
 # (ca-proxy/README). It runs on every relay node; a run with nothing to
-# archive does nothing. Installed by the ca-proxy install where absent.
+# archive does nothing. For a host without systemd: `make install-cron` in
+# ca-proxy puts it in /etc/cron.d where absent. Use it instead of
+# snif-arc.timer, not alongside it.
 
 MAILTO=root
 

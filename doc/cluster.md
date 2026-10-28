@@ -254,7 +254,8 @@ Every rule here is per peer. A node can reach some peers and not others.
 - **A node accepts a CSR only with an answer from every listed peer**
   (sections 5 and 6). So a node that is down pauses new enrolments on every
   node that lists it, and a link that is down pauses them on its two ends.
-  Renewals carry on.
+  Renewals carry on. With a judge (section 5.1), a majority of the nodes and
+  the judge is enough, and neither pauses enrolment.
 - **Why CSRs cannot split:** two nodes can never hold the same CSR lease at
   once if they list each other, or if they list a common peer. In both cases
   one node's grant record decides between them (section 6). Removing only
@@ -465,13 +466,116 @@ holds the same CSR.
 This keeps every node's snifdog from seeing a certificate for a name it has
 no CSR for.
 
+### 5.1 With a judge
+
+**Optional, decided 2026-10-28 (jz).** Without the setting, everything in
+section 5 holds as written: a CSR needs every listed peer. With it, a node
+that is down, or cut off, no longer pauses enrolment on the others.
+
+**The setting**, in `snif.conf` on every node:
+`SNIF_CLUSTER_JUDGE=<zone>@<server>[#<port>]`. The zone is a DNS zone on that
+one nameserver. Its TSIG key is `etc/<zone>.tsig`, in the format
+`tsig-keygen` writes, readable by `snif-syncd`'s user. `snif-syncd` then
+needs Net::DNS, and refuses to start without it, or without the key, or with
+a setting of another form. It reaches the server over TCP.
+
+A zone name may start with an underscore. Its NS must then name a server
+outside the zone: `check-names` fails a primary zone that has an A
+record under a label with an underscore. The judge must be a zone of its own
+on that one server, not a part of a zone the server only copies, because a
+copy cannot be updated.
+
+**The vote.** The voters are the nodes and the judge: three for two nodes,
+four for three. A CSR needs a majority of them (two of three, three of
+four). It counts:
+- the accepting node's own vote;
+- each peer that answers `STORED` or `SAME`;
+- the judge's, asked **only** when the votes above are not yet a majority.
+
+Any `DIFFERENT`, from a peer or the judge, refuses the CSR. The CSR lease is
+taken from the peers that answer (`ALONE` is allowed), so nodes that can
+reach each other still take turns as in section 6.
+
+With every node up, the judge is never asked. It receives updates only while
+a node is down or cut off.
+
+**The judge's record** is `<cn>.<zone> TXT "<sha256 of the CSR>"`, and is
+written in one TSIG-signed update:
+1. The update adds the record, with the prerequisite that the name has no
+   TXT record (RFC 2136 §2.4.3). `NOERROR` means the record is now ours
+   (`SET`).
+2. `YXRRSET` means a record exists. A second update, with no change and only
+   the prerequisite that the record holds our value, answers `NOERROR`
+   (`SAME`) or `NXRRSET` (`DIFFERENT`).
+
+The server checks the prerequisite and applies the change in one step, so
+of two nodes writing at once exactly one gets `SET`.
+
+An answer counts only if its signature verifies. Net::DNS verifies a signed
+answer but passes one with no signature at all, so `snif-syncd` refuses
+those itself. No verified answer, a refusal (for example `BADSIG`) or a
+timeout is no vote. A child process makes the exchange, within 2 × the
+request deadline + 1 s.
+
+**Why a name still cannot get two CSRs.** Any two majorities share a voter,
+and each voter refuses a second CSR once it holds one:
+- a node by rule 1 of section 5;
+- the judge by its prerequisite.
+
+Nodes that can reach each other also take the lease from each other first,
+as in section 6.
+
+| Situation | Without a judge | With a judge |
+|---|---|---|
+| One of two nodes down | No new enrolment anywhere | The other node enrolls, with the judge |
+| The link between two nodes down, both reach the judge | Both refuse | Both enroll; for a name sent to both, the first to the judge wins |
+| The judge down | n/a | No change while the nodes reach each other |
+| A node down and the judge down | No new enrolment | No new enrolment |
+| A node back after missing CSRs, cut off from its peer | n/a | It refuses another CSR for those names (`DIFFERENT` from the judge), and accepts the same one |
+
+**CSRs owed to a peer.** A CSR accepted without a listed peer is queued for
+it, as a link `sync-queue/<peer>/csr/<cn>.csr`. When the peer answers again,
+the queue delivers it under the CSR lease, as any CSR. A peer holding another
+CSR for the name is a conflict, kept in the log and in `snif-syncd status`.
+Without a judge, such links are still refused.
+
+**First certificates** (`ENSURE`) need the same majority. So a node that was
+down can see a first certificate in CT before its copy of the CSR arrives,
+and its snifdog reports that name until the copy does. That is accepted
+(jz, 2026-10-28). snifdog is a secondary service: it reconciles once the
+cluster is restored and the CSRs are synced. The judge keeps no keys for it.
+
+**The judge's zone must be:**
+1. **On one server only**, its primary, while the ACME challenge zones stay
+   on both nameservers (section 9). Two independent copies would be two
+   judges.
+2. **Out of every failover.** No secondary may be promoted to master: a copy
+   that is behind is a judge that has forgotten.
+3. **Never reset, and never edited by hand** (it is a dynamic zone).
+   - **Why:** a judge that has forgotten a CSR held by one node only could
+     accept another.
+   - **If the zone or its journal is lost:** remove `SNIF_CLUSTER_JUDGE` from
+     every node, run `snif-syncd reconcile` on every node with every peer
+     up, and only then set it again.
+4. **Written only with its own key:** `update-policy { grant <key> subdomain
+   <zone>. TXT; };`, and queries allowed from the nodes only.
+
+Not checked: whether an acknowledged update survives a power loss (that is
+named's journal fsync). One survives `kill -9` of named (BIND 9.20, tested
+2026-10-28).
+
+`snif-syncd status` adds `judge <zone>@<server> majority=<n>
+last=<age>s <answer>`. The log has one line per answer (`judge <cn>: SET`,
+`ERROR no answer (BADSIG)`, ...), and one per CSR accepted without some peers.
+Tests: `ca-proxy/test/judge.t`.
+
 ## 6. Leases
 
 There are two leases per name:
 
 | Lease | Guards | Duration (**default**) | If a peer cannot be asked |
 |---|---|---|---|
-| `csr:<cn>` | every write to `csr/<cn>.csr` | 30 s | not taken, so nothing is written |
+| `csr:<cn>` | every write to `csr/<cn>.csr` | 30 s | not taken, so nothing is written; with a judge, taken from the peers that answer (`ALONE`), and the vote decides (section 5.1) |
 | `crt:<cn>` | issuing a certificate | 600 s | taken without it (`ALONE`), for renewals only |
 
 The CSR lease is what prevents two CSRs for one name. The certificate lease
@@ -802,12 +906,13 @@ None of them forwards traffic. PHP needs nothing.
 
 | Failure | Effect |
 |---|---|
-| A node is down | Its address stays in DNS, and clients and connectors move on to another address (section 9). Its devices reconnect to other nodes. Renewals continue (`ALONE`). New enrolments and first certificates wait on every node that lists it (section 5) |
+| A node is down | Its address stays in DNS, and clients and connectors move on to another address (section 9). Its devices reconnect to other nodes. Renewals continue (`ALONE`). New enrolments and first certificates wait on every node that lists it (section 5); with a judge they go on, and the CSRs it missed are queued for it (section 5.1) |
 | A node stays down | Evict it on every other node (section 3.2) |
-| The network between two nodes A and B is down | Clients on A time out for devices on B, and the reverse. A and B cannot accept CSRs, and every other node still can. Files between A and B queue |
+| The network between two nodes A and B is down | Clients on A time out for devices on B, and the reverse. A and B cannot accept CSRs, and every other node still can; with a judge that both reach, both can. Files between A and B queue |
 | Only a tunnel is down | As above for forwarding, in that direction. Nothing reports it, so it needs monitoring |
 | Only a sync session is down | Files for that peer queue. Certificate leases are `ALONE`. CSR acceptance on the two ends answers `UNREACHABLE` |
-| The cluster splits into groups that cannot reach each other | Each group serves its own devices. Clients reach only devices in their own group. No node accepts CSRs. Renewals continue in each group, at the cost of one duplicate certificate per group |
+| The cluster splits into groups that cannot reach each other | Each group serves its own devices. Clients reach only devices in their own group. No node accepts CSRs, except, with a judge, in a group that reaches it and holds a majority with it. Renewals continue in each group, at the cost of one duplicate certificate per group |
+| The judge is down (section 5.1) | Nothing changes while the nodes reach each other. A CSR that would need its vote gets 503 |
 | One of the pool zone's nameservers is down | Challenge values go to the other one. Validation works, because resolvers move on to the server that answers |
 | A pool zone nameserver answers but refuses updates | Issues for device names fail after `$DNSWait`, before Let's Encrypt is asked. `snif-certd` retries hourly and logs the refused update |
 | `snif-syncd` is down | Enqueuing still works, since it only creates links. CSR PUTs to that node get 503. Its `snif-certd` renews as `ALONE` and holds first certificates. Other nodes cannot accept CSRs while they cannot reach it |
@@ -829,12 +934,13 @@ None of them forwards traffic. PHP needs nothing.
    - challenge update timeout 5 s per nameserver,
    - connect timeout 5 s per address,
    - at most 4096 held `CONNECT` lines per node.
-3. **Enrolment needs every listed peer.** One node down pauses new
-   enrolments on every node until it returns or is evicted, so pauses get
-   more likely as nodes are added. A majority rule would keep enrolment going
-   without a minority of nodes. But a node that missed a CSR would then see
-   that name's first certificate in CT, and its snifdog would report it as
-   never provisioned (section 5). Not designed.
+3. **Enrolment needs every listed peer,** unless a judge is set. Without
+   one, a node that is down pauses new enrolments on every node until it
+   returns or is evicted, so pauses get more likely as nodes are added. A
+   majority rule among the nodes alone is not designed; the judge (section
+   5.1, 2026-10-28) is the majority rule built. Its snifdog consequence (a
+   node that missed a CSR reports the name until its copy arrives) is
+   accepted (jz).
 4. No limit on the number of nodes is set. Each node writes every push once
    per peer and waits on every peer for leases, so the load per node and the
    chance of a pause both grow with the number of nodes.
@@ -884,6 +990,26 @@ CSR acceptance:
   refused.
 - A node that is not listed gets `REJECT member` for `CSR`, `LEASE` and
   `PUT`, and answers to `GET` and `LIST`.
+
+With a judge (section 5.1; `ca-proxy/test/judge.t`, two nodes and a
+throwaway named):
+- Both nodes up: a CSR is accepted without asking the judge.
+- The peer down: accepted with the judge, which holds its hash, and queued
+  for the peer, which receives it when back. The same CSR again is `SAME`,
+  another is `DIFFERENT`.
+- The two nodes cut off from each other, different CSRs for one name on both
+  at once, three rounds: exactly one accepted, the judge holds it, the other
+  node stores nothing; once healed, the winner's CSR reaches the other node,
+  with no conflict.
+- A node back after missing a CSR, still cut off: another CSR for the name is
+  `DIFFERENT`, the same one is accepted.
+- `ENSURE` with the peer down: the judge's vote, and queued for the peer.
+- The judge and the peer down: `UNREACHABLE`, nothing stored. The judge
+  down, both nodes up: accepted.
+- A responder that answers `NOERROR` unsigned, and a wrong key (`BADSIG`): no
+  vote.
+- Without the setting, nothing changes; a malformed setting or a missing key
+  stops the daemon at start.
 
 Leases:
 - Three nodes requesting one lease at once: never two holders, partial grants

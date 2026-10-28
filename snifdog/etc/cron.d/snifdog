@@ -1,6 +1,7 @@
-# snifdog -- SNIF CA Transparency watchdog, cron mode. An example, installed
-# as /usr/share/snifdog/cron.d-snifdog.example: copy it to /etc/cron.d/snifdog
-# to run snifdog from cron instead of the units.
+# snifdog -- SNIF CA Transparency watchdog, cron mode. Not installed by
+# default: `make install-cron` in snifdog puts it in /etc/cron.d/snifdog, to
+# run snifdog from cron instead of the units. The install keeps a copy as
+# /usr/share/snifdog/cron.d-snifdog.example.
 #
 # Run one incremental CT pass every 15 minutes for every configuration:
 # /etc/snif/snifdog.conf if it exists, and each /etc/snif/snifdog.d/*.conf,

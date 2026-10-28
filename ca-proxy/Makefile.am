@@ -31,8 +31,11 @@ logrotatedir = /etc/logrotate.d
 #   is group snif-rw.
 # - The tree is chowned before mkdirs runs, so that mkdirs gives snifd's
 #   pipes back to snifd.
-# - The daily snif-arc cron entry, which lets certificates renew, and the
-#   logrotate entry for the daemons' logs go in where absent.
+# - The units include snif-arc.timer, which runs snif-arc daily and so lets
+#   certificates renew; like the others it is not enabled. The logrotate
+#   entry for the daemons' logs goes in where absent. The snif-arc cron
+#   entry does not: make install-cron puts it in, for a host without
+#   systemd. One an older install put in /etc/cron.d is kept and reported.
 # - Only a root install without DESTDIR makes the users and groups, chowns
 #   and reloads systemd. A staged (DESTDIR) install, e.g. for a package,
 #   gets everything else.
@@ -96,14 +99,33 @@ install-data-hook:
 	$(SHELL) $(srcdir)/mkdirs "$(DESTDIR)$(snifd_ca_basedir)"
 	if [ -n "$(DESTDIR)" ] || [ -d $(systemdunitdir) ]; then \
 	    $(MKDIR_P) "$(DESTDIR)$(systemdunitdir)" && \
-	    $(INSTALL_DATA) $(srcdir)/etc/systemd/*.service "$(DESTDIR)$(systemdunitdir)/"; \
+	    $(INSTALL_DATA) $(srcdir)/etc/systemd/*.service $(srcdir)/etc/systemd/*.timer "$(DESTDIR)$(systemdunitdir)/"; \
 	fi
-	if [ ! -e "$(DESTDIR)$(crondir)/snif-arc" ] && { [ -n "$(DESTDIR)" ] || [ -d $(crondir) ]; }; then \
-	    $(MKDIR_P) "$(DESTDIR)$(crondir)" && \
-	    $(INSTALL_DATA) $(srcdir)/etc/cron.d/snif-arc "$(DESTDIR)$(crondir)/"; \
+	if [ -z "$(DESTDIR)" ] && [ -e $(crondir)/snif-arc ] && [ -d $(systemdunitdir) ]; then \
+	    echo "$(crondir)/snif-arc is kept: it runs snif-arc as snif-arc.timer does, so keep one of the two" >&2; \
 	fi
 	if [ ! -e "$(DESTDIR)$(logrotatedir)/snif" ] && { [ -n "$(DESTDIR)" ] || [ -d $(logrotatedir) ]; }; then \
 	    $(MKDIR_P) "$(DESTDIR)$(logrotatedir)" && \
 	    $(INSTALL_DATA) $(srcdir)/etc/logrotate.d/snif "$(DESTDIR)$(logrotatedir)/"; \
 	fi
 	if $(ROOT_INSTALL) && [ -d /run/systemd/system ]; then systemctl daemon-reload || true; fi
+
+# The cron entry, instead of snif-arc.timer, for a host without systemd: it
+# goes in where absent, and an existing one is kept. It runs nothing without
+# a cron daemon, and twice a day beside an enabled timer: both are reported.
+install-cron:
+	if [ -e "$(DESTDIR)$(crondir)/snif-arc" ]; then \
+	    echo "$(crondir)/snif-arc exists: kept"; \
+	else \
+	    $(MKDIR_P) "$(DESTDIR)$(crondir)" && \
+	    $(INSTALL_DATA) $(srcdir)/etc/cron.d/snif-arc "$(DESTDIR)$(crondir)/" || exit 1; \
+	fi
+	if [ -z "$(DESTDIR)" ]; then \
+	    PATH="$$PATH:/usr/sbin:/sbin"; \
+	    command -v cron >/dev/null || command -v crond >/dev/null || \
+		echo "No cron daemon here: $(crondir)/snif-arc runs nothing until one is installed" >&2; \
+	    ! systemctl is-enabled -q snif-arc.timer 2>/dev/null || \
+		echo "snif-arc.timer is enabled too: disable it, or remove $(crondir)/snif-arc" >&2; \
+	fi
+
+.PHONY: install-cron
