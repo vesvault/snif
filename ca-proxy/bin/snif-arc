@@ -22,9 +22,36 @@
 # *
 # **************************************************************************/
 
+# snif-arc: the CA proxy's daily housekeeping, run on every relay node
+# (README, "snif-arc").
+#
+# It archives the certificates older than 75 days, moving them from crt/ to
+# arc/<date>/, so that snif-certd issues a fresh one the next time the
+# connector asks. Then, for each of these set to a number of days in
+# snif.conf, it applies that retention period; unset, it keeps everything:
+#
+#   SNIF_ARC_DEVICE_DAYS      an approved name whose newest certificate
+#                             expired this many days ago: all its files
+#   SNIF_ARC_UNAPPROVED_DAYS  a name never approved and never issued, this
+#                             many days after it was allocated: its files
+#   SNIF_ARC_OLD_DAYS         an archived certificate that is not its name's
+#                             newest, this many days after it was archived
+#   SNIF_ARC_AUTH_DAYS        an approval this old keeps only the fact that
+#                             it was approved ("1", as a captcha approval
+#                             writes), not the account; approval-counter
+#                             entries this old are dropped
+#
+# Every rule reads modification times and contents, which the cluster sync
+# keeps the same on every node, so each node removes the same files on its
+# own run. snif-syncd's reconciliation horizon (SNIF_CLUSTER_RECONCILE_DAYS,
+# doc/cluster.md 7.4) must be shorter than every period set here, or
+# reconciliation brings back what a node removed before its peers did.
+#
 # Settings come from /etc/snif/snif.conf, or /etc/snif.conf where an older
 # install put it. SNIF_CA_PROXY in the environment overrides it, as for the
-# daemons.
+# daemons, and then the other settings come from the environment too.
+# SNIF_ARC_NOW (seconds since the epoch) stands in for the clock, for tests.
+
 if [ -z "$SNIF_CA_PROXY" ]; then
     for f in /etc/snif/snif.conf /etc/snif.conf; do
 	if [ -r $f ]; then . $f; break; fi
@@ -37,17 +64,212 @@ if [ -z "$BaseDir" ] || [ ! -d "$BaseDir/crt" ]; then
 fi
 CertDir="$BaseDir/crt"
 ArcDir="$BaseDir/arc"
+Day=86400
+Now=${SNIF_ARC_NOW:-$(date +%s)}
 
-mkdir -m 0775 $ArcDir 2> /dev/null
+# A period setting: a whole number of days, else unset.
+period() {
+    local v="${!1}"
+    if [[ "$v" =~ ^[[:space:]]*([0-9]+)[[:space:]]*$ ]]; then
+	echo "${BASH_REMATCH[1]}"
+    elif [ -n "$v" ]; then
+	echo "snif-arc: $1='$v' is not a number of days, ignored" >&2
+    fi
+}
+DeviceDays=$(period SNIF_ARC_DEVICE_DAYS)
+UnapprovedDays=$(period SNIF_ARC_UNAPPROVED_DAYS)
+OldDays=$(period SNIF_ARC_OLD_DAYS)
+AuthDays=$(period SNIF_ARC_AUTH_DAYS)
 
-ArcDay=$ArcDir/`date +%Y%m%d`
+Failed=0
+# The modification time and name of each file directly in a directory, one
+# "<seconds> <name>" line each: one find for the whole directory. A name
+# starting with "." or ending in "+" is a file being written (snif-syncd's,
+# or rewrite() below): left alone.
+mtimes() {
+    [ -d "$1" ] && find "$1/" -mindepth 1 -maxdepth 1 -type f -name "$2" ! -name '.*' ! -name '*+' -printf '%T@ %f\n' 2>/dev/null
+}
+# A file's contents, into the variable named by $1, without a process.
+slurp() {
+    IFS= read -r -d '' "$1" < "$2"
+    return 0
+}
+# Remove files; count a failure for any that stays.
+remove() {
+    local f
+    for f in "$@"; do
+	[ -e "$f" ] || continue
+	rm -f -- "$f" || Failed=$((Failed + 1))
+    done
+}
+# Replace a file's contents, keeping its mode and modification time. The
+# temporary name ends in "+", which the sync never carries.
+rewrite() {
+    local f=$1 tmp="$1.arc$$+"
+    if printf '%s' "$2" > "$tmp" && chmod --reference="$f" "$tmp" && touch -r "$f" "$tmp" && mv -f -- "$tmp" "$f"; then
+	return 0
+    fi
+    rm -f -- "$tmp"
+    Failed=$((Failed + 1))
+    return 1
+}
 
-mkdir -m 0775 $ArcDay 2> /dev/null
+# ---- archive ---------------------------------------------------------------
 
 # crt/<d>.crt of a local-CA base domain (etc/<d>.pub-ca) is the root bundle
 # published at /snif-cert/<d>.crt, not an issued certificate: it stays.
-find $CertDir/ -name "*.crt" -mtime +75 | while read Crt ; do
-    [ -e "$BaseDir/etc/`basename $Crt .crt`.pub-ca" ] || mv $Crt $ArcDay/
-done
+Archived=0
+ArcDay="$ArcDir/$(date -u -d @$Now +%Y%m%d)"
+while read -r t f; do
+    [ "${t%.*}" -lt $((Now - 75 * Day)) ] || continue
+    [ -e "$BaseDir/etc/${f%.crt}.pub-ca" ] && continue
+    mkdir -p -m 0775 "$ArcDay" 2> /dev/null
+    if mv -- "$CertDir/$f" "$ArcDay/"; then Archived=$((Archived + 1)); else Failed=$((Failed + 1)); fi
+done < <(mtimes "$CertDir" '*.crt')
 
-rmdir --ignore-fail-on-non-empty $ArcDay
+# The newest archived copy of each name: Newest[name]="<seconds> <day>/<name>.crt",
+# relative to arc/.
+declare -A Newest
+index_arc() {
+    Newest=()
+    local t p n
+    [ -d "$ArcDir" ] || return
+    while read -r t p; do
+	n=${p##*/}; n=${n%.crt}
+	if [ -z "${Newest[$n]}" ] || [ "${t%.*}" -gt "${Newest[$n]%% *}" ]; then Newest[$n]="${t%.*} $p"; fi
+    done < <(find "$ArcDir/" -mindepth 2 -maxdepth 2 -type f -name '*.crt' -printf '%T@ %P\n' 2>/dev/null)
+}
+# Everything the CA proxy keeps for a name.
+remove_name() {
+    remove "$BaseDir/cfg/$1.cfg" "$BaseDir/auth/$1.auth" "$BaseDir/csr/$1.csr" \
+	"$CertDir/$1.crt" "$CertDir/$1.err" "$BaseDir/log/$1.log" "$ArcDir"/*/"$1.crt"
+}
+
+# ---- retention: devices ------------------------------------------------------
+
+Devices=0
+if [ -n "$DeviceDays" ]; then
+    cut=$((Now - DeviceDays * Day))
+    index_arc
+    while read -r t f; do
+	n=${f%.auth}
+	[ -e "$CertDir/$n.crt" ] && continue		# renewed in the last 75 days
+	if [ -n "${Newest[$n]}" ]; then
+	    # A certificate expires after it is issued, so one issued since the
+	    # cut has not expired before it.
+	    [ "${Newest[$n]%% *}" -lt $cut ] || continue
+	    end=$(openssl x509 -noout -enddate -in "$ArcDir/${Newest[$n]#* }" 2> /dev/null) || continue
+	    end=$(date -d "${end#notAfter=}" +%s 2> /dev/null) || continue
+	    [ "$end" -lt $cut ] || continue
+	else
+	    # Approved but never issued: from the approval.
+	    [ "${t%.*}" -lt $cut ] || continue
+	fi
+	remove_name "$n"
+	Devices=$((Devices + 1))
+    done < <(mtimes "$BaseDir/auth" '*.auth')
+fi
+
+# ---- retention: names never approved -------------------------------------------
+
+Unapproved=0
+if [ -n "$UnapprovedDays" ]; then
+    cut=$((Now - UnapprovedDays * Day))
+    index_arc
+    while read -r t f; do
+	[ "${t%.*}" -lt $cut ] || continue
+	n=${f%.cfg}
+	# Never approved here, and never issued anywhere: a certificate without
+	# the approval on this node means the approval has yet to arrive.
+	[ -e "$BaseDir/auth/$n.auth" ] || [ -e "$CertDir/$n.crt" ] || [ -n "${Newest[$n]}" ] && continue
+	remove_name "$n"
+	Unapproved=$((Unapproved + 1))
+    done < <(mtimes "$BaseDir/cfg" '*.cfg')
+fi
+
+# ---- retention: older archived copies --------------------------------------------
+
+OldCopies=0
+if [ -n "$OldDays" ] && [ -d "$ArcDir" ]; then
+    cut=$((Now - OldDays * Day))
+    index_arc
+    for d in "$ArcDir"/*/; do
+	d=${d%/}
+	[[ "${d##*/}" =~ ^[0-9]{8}$ ]] || continue
+	archived=$(date -u -d "${d##*/}" +%s 2> /dev/null) || continue
+	[ "$archived" -lt $cut ] || continue
+	for c in "$d"/*.crt; do
+	    [ -f "$c" ] || continue
+	    n=${c##*/}; n=${n%.crt}
+	    [ "${Newest[$n]#* }" = "${d##*/}/$n.crt" ] && continue
+	    remove "$c"
+	    OldCopies=$((OldCopies + 1))
+	done
+    done
+fi
+if [ -d "$ArcDir" ]; then
+    for d in "$ArcDir"/*/; do rmdir "${d%/}" 2> /dev/null; done
+fi
+
+# ---- retention: approvals and approval counters ----------------------------------
+
+Cleared=0
+Trimmed=0
+if [ -n "$AuthDays" ]; then
+    cut=$((Now - AuthDays * Day))
+    while read -r t f; do
+	[ "${t%.*}" -lt $cut ] || continue
+	slurp a "$BaseDir/auth/$f"
+	[ "$a" = 1 ] && continue
+	rewrite "$BaseDir/auth/$f" 1 && Cleared=$((Cleared + 1))
+    done < <(mtimes "$BaseDir/auth" '*.auth')
+
+    # A VES counter (inc/snif-auth-ves.php) holds one line per approval: a
+    # run of "*" from before times were kept, then the time; a run with no
+    # time is at the file's modification time, which a kept one is given here.
+    # A single relay keeps them in auth/ves/, a cluster node in
+    # auth/ves/<node>/.
+    for nd in "$BaseDir"/auth/ves/*/ "$BaseDir"/auth/ves; do
+	[ -d "$nd" ] || continue
+	while read -r t f; do
+	    c="${nd%/}/$f"
+	    kept=$(awk -v cut=$cut -v mt="${t%.*}" '
+		$0 == "" { next }
+		{
+		    match($0, /^\**/); stars = substr($0, 1, RLENGTH)
+		    rest = substr($0, RLENGTH + 1); sub(/^[ \t]+/, "", rest)
+		    if (match(rest, /^[0-9]+/)) tm = substr(rest, 1, RLENGTH); else tm = mt
+		    if (tm + 0 < cut + 0) next
+		    print (stars == "" ? "" : stars " ") tm
+		}' "$c") || { Failed=$((Failed + 1)); continue; }
+	    slurp a "$c"
+	    [ "$kept" = "${a%$'\n'}" ] && continue
+	    if [ -z "$kept" ]; then
+		remove "$c"
+	    else
+		rewrite "$c" "$kept"$'\n' || continue
+	    fi
+	    Trimmed=$((Trimmed + 1))
+	done < <(mtimes "$nd" '*')
+    done
+    # Captcha counters (inc/snif-auth-captcha.php): one file per day, and
+    # per day and hashed address.
+    for nd in "$BaseDir"/auth/captcha/*/ "$BaseDir"/auth/captcha; do
+	[ -d "$nd" ] || continue
+	while read -r t f; do
+	    [ "${t%.*}" -lt $cut ] || continue
+	    case "$f" in day-*|ip-*) ;; *) continue ;; esac
+	    remove "${nd%/}/$f"
+	    Trimmed=$((Trimmed + 1))
+	done < <(mtimes "$nd" '*')
+    done
+fi
+
+msg="snif-arc: archived $Archived"
+[ -n "$DeviceDays" ] && msg="$msg, devices removed $Devices"
+[ -n "$UnapprovedDays" ] && msg="$msg, unapproved names removed $Unapproved"
+[ -n "$OldDays" ] && msg="$msg, older archived copies removed $OldCopies"
+[ -n "$AuthDays" ] && msg="$msg, approvals cleared $Cleared, counter files trimmed $Trimmed"
+[ $Failed -gt 0 ] && msg="$msg, FAILED $Failed"
+echo "$msg"
+[ $Failed -eq 0 ]

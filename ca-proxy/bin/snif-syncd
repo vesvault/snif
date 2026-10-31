@@ -41,7 +41,8 @@
 # SNIF_CLUSTER_JUDGE ("<zone>@<server>[#<port>]": a DNS zone on one
 # nameserver that decides a CSR when the peers that answer are not enough for
 # a majority, section 5.1). Without SNIF_CLUSTER_JUDGE a CSR needs every
-# listed peer, as before.
+# listed peer, as before. SNIF_CLUSTER_RECONCILE_DAYS (default 7, 0 for none)
+# is reconciliation's horizon (section 7.4).
 #
 # Only core Perl modules are used, and Net::DNS with SNIF_CLUSTER_JUDGE.
 
@@ -60,7 +61,7 @@ use Time::Local qw(timegm);
 
 our $VERSION = '1';
 
-my %Conf = conf(qw(SNIF_CA_PROXY SNIF_CLUSTER_NODE SNIF_CLUSTER_PEERS SNIF_CLUSTER_LEASE SNIF_CLUSTER_PEER_CMD SNIF_CLUSTER_JUDGE));
+my %Conf = conf(qw(SNIF_CA_PROXY SNIF_CLUSTER_NODE SNIF_CLUSTER_PEERS SNIF_CLUSTER_LEASE SNIF_CLUSTER_PEER_CMD SNIF_CLUSTER_JUDGE SNIF_CLUSTER_RECONCILE_DAYS));
 our $BaseDir = $Conf{SNIF_CA_PROXY};
 our $Node = $Conf{SNIF_CLUSTER_NODE};
 our %Peers = map { /^([^=]+)=(.*)$/ ? ($1 => $2) : () } split(' ', $Conf{SNIF_CLUSTER_PEERS} // '');
@@ -93,12 +94,15 @@ our $RetryDelay = 1;		# random delay up to this after a partial grant
 our $ScanEvery = 60;
 our $HealthAge = 300;
 our $BackoffMax = 30;
+# Reconciliation leaves alone a difference in which every copy is older than
+# this many days (section 7.4); 0 repairs every difference, as before 1.12.
+our $ReconcileDays = ($Conf{SNIF_CLUSTER_RECONCILE_DAYS} // '') =~ /^\s*(\d+(?:\.\d+)?)\s*$/ ? $1 : 7;
 
 # For tests: SNIF_SYNCD_SET="Deadline=1 PingEvery=1" overrides the defaults above.
 foreach (split ' ', $ENV{SNIF_SYNCD_SET} // '') {
     my ($k, $v) = split(/=/, $_, 2);
     no strict 'refs';
-    ${"main::$k"} = $v if $k =~ /^(Deadline|LongDeadline|PingEvery|PingMiss|CSRLease|CrtLease|Margin|CSRWait|RetryDelay|ScanEvery|HealthAge|BackoffMax)$/;
+    ${"main::$k"} = $v if $k =~ /^(Deadline|LongDeadline|PingEvery|PingMiss|CSRLease|CrtLease|Margin|CSRWait|RetryDelay|ScanEvery|HealthAge|BackoffMax|ReconcileDays)$/;
 }
 
 our $NameRe = qr/[A-Za-z0-9][A-Za-z0-9_-]{0,31}/;
@@ -1118,11 +1122,11 @@ sub reconcile_all {
     my ($only, $seed, $cb) = @_;
     my @peers = $only ? ($only) : sort keys %Peers;
     return $cb->('REJECT peer') if grep { !exists $Peers{$_} } @peers;
-    my %tot = (pulled => 0, pushed => 0, conflicts => 0, failed => 0);
+    my %tot = (pulled => 0, pushed => 0, conflicts => 0, failed => 0, old => 0);
     my $next;
     $next = sub {
 	my $p = shift @peers;
-	return $cb->("OK pulled=$tot{pulled} pushed=$tot{pushed} conflicts=$tot{conflicts} failed=$tot{failed}") if !defined $p;
+	return $cb->("OK pulled=$tot{pulled} pushed=$tot{pushed} conflicts=$tot{conflicts} failed=$tot{failed} old=$tot{old}") if !defined $p;
 	if (!sess_up($p)) { $tot{failed}++; return $next->() }
 	reconcile_peer($p, $seed, \%tot, $next);
     };
@@ -1144,6 +1148,21 @@ sub reconcile_peer {
 	    my %local = map { $_->[0] => $_ } list_local($class);
 	    my @pull = grep { !$local{$_} || $local{$_}[3] ne $remote{$_}[3] } sort keys %remote;
 	    my @push = $seed ? () : grep { !$remote{$_} || $remote{$_}[3] ne $local{$_}[3] } sort keys %local;
+	    # The horizon: a difference in which every copy is older than
+	    # $ReconcileDays was made on purpose, by snif-arc archiving a
+	    # certificate or removing or clearing a record on its schedule, and
+	    # repairing it would undo that on the node that ran first. Anything
+	    # written since travels through the queue. A seed copies everything,
+	    # and a counter is only ever taken from its own node, so neither
+	    # needs it.
+	    if (!$seed && $ReconcileDays > 0 && $class ne 'ves' && $class ne 'captcha') {
+		my $cut = time - $ReconcileDays * 86400;
+		my $recent = sub { grep { $_ && $_->[2] >= $cut } ($local{$_[0]}, $remote{$_[0]}) };
+		my %diff = map { $_ => 1 } @pull, @push;
+		$tot->{old} += grep { !$recent->($_) } keys %diff;
+		@pull = grep { $recent->($_) } @pull;
+		@push = grep { $recent->($_) } @push;
+	    }
 	    reconcile_files($p, $class, \@pull, \@push, \%local, \%remote, $seed, $tot, $step);
 	}, 'list', 0);
     };

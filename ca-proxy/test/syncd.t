@@ -236,6 +236,35 @@ check(wait_for(sub { !grep({ (slurp(tree($_) . "/auth/snif-7.x.test.auth") // ''
     "and pushed its auth file to b and c");
 check((slurp(tree('c') . "/csr/snif-7.x.test.csr") // '') eq $csr1, "the CSR a lacked went to c too, under the lease");
 
+# The horizon (section 7.4): reconciliation leaves alone a difference in which
+# every copy is older than 7 days, the default, as snif-arc's archiving and
+# retention leave them; a recent one, a counter, and a seed are not affected.
+{
+    my $old = int(time) - 10 * 86400;
+    my $aged = sub { my ($p, $d) = @_; spew($p, $d); utime($old, $old, $p) };
+    $aged->(tree('b') . "/cfg/snif-20.x.test.cfg", "old, only on b\n");
+    $aged->(tree('b') . "/crt/snif-21.x.test.crt", slurp("$T/long.pem"));
+    $aged->(tree('a') . "/auth/snif-22.x.test.auth", "1");
+    $aged->(tree('b') . "/auth/snif-22.x.test.auth", "user\@example.com");
+    $aged->(tree('b') . "/auth/ves/b/old\@example.com", "$old\n");
+    spew(tree('b') . "/cfg/snif-23.x.test.cfg", "new, only on b\n");
+    $r = ask('a', 'RECONCILE b');
+    check(scalar($r =~ /^OK .* old=(\d+)$/) && $1 >= 3, "RECONCILE a with b counts the old differences it leaves ($r)");
+    check(!-e tree('a') . "/cfg/snif-20.x.test.cfg" && !-e tree('a') . "/crt/snif-21.x.test.crt",
+	"a cfg and a certificate 10 days old that only b has are not pulled");
+    check((slurp(tree('a') . "/auth/snif-22.x.test.auth") // '') eq "1" && ask('a', 'STATUS') !~ m{^conflict auth/snif-22\.}m,
+	"an approval cleared on a and not yet on b, both 10 days old: no conflict, a keeps its own");
+    sleep 1;
+    check((slurp(tree('b') . "/auth/snif-22.x.test.auth") // '') eq "user\@example.com", "and a's copy is not pushed to b");
+    check((slurp(tree('a') . "/cfg/snif-23.x.test.cfg") // '') eq "new, only on b\n", "a recent cfg only b has is pulled");
+    check((slurp(tree('a') . "/auth/ves/b/old\@example.com") // '') eq "$old\n", "b's own counter is pulled, however old");
+    unlink tree('a') . "/auth/snif-22.x.test.auth";
+    $r = ask('a', 'SEED b');
+    check(scalar($r =~ /^OK /) && -e tree('a') . "/cfg/snif-20.x.test.cfg" && -e tree('a') . "/crt/snif-21.x.test.crt"
+	&& (slurp(tree('a') . "/auth/snif-22.x.test.auth") // '') eq "user\@example.com",
+	"SEED b copies them all, old or not ($r)");
+}
+
 # ---- lease rules seen by a peer ---------------------------------------------------
 {
     my $pb = peer_conn('a', 'b');
@@ -369,6 +398,29 @@ check(scalar($r =~ /^OK /) && !grep({ !-e tree('d') . "/$_" } qw(csr/snif-1.x.te
     my $out = do { local $/; <$p> } // '';
     close $p;
     check($out eq "crt/snif-11.x.test.crt\n", "LIST crt follows a crt/ that is a link (" . join(' ', split(/\n/, $out)) . ")");
+}
+
+# End to end with snif-arc: it removes a name on a that b still holds, and
+# reconciliation leaves it removed until b's own run removes it there too.
+# Last, since snif-arc also removes the other old names the tests above left.
+{
+    my $old = int(time) - 31 * 86400;
+    foreach my $n (qw(a b)) { spew(tree($n) . "/cfg/snif-24.x.test.cfg", ""); utime($old, $old, tree($n) . "/cfg/snif-24.x.test.cfg") }
+    my $arc = sub {
+	local %ENV = (%ENV, SNIF_CA_PROXY => tree($_[0]), SNIF_ARC_UNAPPROVED_DAYS => 30);
+	my $o = `'$FindBin::Bin/../bin/snif-arc' 2>&1`;
+	chomp $o;
+	return ($? >> 8, $o);
+    };
+    my ($rc, $o) = $arc->('a');
+    check($rc == 0 && !-e tree('a') . "/cfg/snif-24.x.test.cfg" && -e tree('b') . "/cfg/snif-24.x.test.cfg",
+	"snif-arc on a removes a name never approved, 31 days old ($o)");
+    $r = ask('a', 'RECONCILE');
+    check(scalar($r =~ /^OK /) && !-e tree('a') . "/cfg/snif-24.x.test.cfg", "reconciliation does not bring it back from b ($r)");
+    $r = ask('b', 'RECONCILE');
+    check(scalar($r =~ /^OK /) && !-e tree('a') . "/cfg/snif-24.x.test.cfg", "nor does b's ($r)");
+    ($rc, $o) = $arc->('b');
+    check($rc == 0 && !-e tree('b') . "/cfg/snif-24.x.test.cfg", "b's own run removes it there ($o)");
 }
 
 if ($fail) {

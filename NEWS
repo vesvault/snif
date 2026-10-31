@@ -1,5 +1,38 @@
 snif NEWS -- history of user-visible changes
 
+Version 1.12
+------------
+
+* snifd: a connector whose TLS handshake with the relay fails, or that
+  has no usable certificate when it connects, reconnects after 15 s.
+  Until now it closed the relay connection for good and kept running
+  without one until restarted, so one refused or interrupted handshake,
+  a relay restart among them, could leave a device unreachable. A
+  connector the relay disconnects without answering now waits before
+  reconnecting, 15 s and then twice as long each time up to 5 minutes,
+  instead of reconnecting at once in a loop; one the relay had answered
+  on reconnects at once, as before. snifd/test/reconnect.sh covers both.
+
+* ca-proxy: retention. snif-arc removes old CA proxy state, for each
+  period set in snif.conf; unset, it keeps everything, as before.
+  SNIF_ARC_DEVICE_DAYS removes an approved device that long after its
+  newest certificate expired; SNIF_ARC_UNAPPROVED_DAYS a name never
+  approved, that long after it was allocated; SNIF_ARC_OLD_DAYS archived
+  certificates other than each name's newest. SNIF_ARC_AUTH_DAYS clears
+  the account an approval names, keeping the approval, and drops old
+  approval-counter entries, so the relay keeps who approved a device only
+  for that long and never needs to hear of an account's deletion. Each run
+  reports its counts in one line. ca-proxy/test/arc.t covers it.
+
+* ca-proxy: snif-syncd's reconciliation leaves alone a difference in which
+  every copy is older than SNIF_CLUSTER_RECONCILE_DAYS (default 7, 0 for
+  none), and counts it as old= in its reply. Such a difference is what
+  snif-arc leaves between two nodes' runs, and repairing it brought back a
+  certificate archived, or a record removed, on the node that ran first.
+  Writes still travel through the queue; a node down for longer than the
+  horizon catches up with snif-syncd seed. test/syncd.t covers it, with
+  snif-arc and reconciliation end to end.
+
 Version 1.11
 ------------
 

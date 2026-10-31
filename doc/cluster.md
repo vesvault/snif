@@ -318,8 +318,10 @@ checks every path against these patterns before writing anything.
 
 Rules per class:
 
-- **once:** created if absent, never overwritten, never deleted. A receiver
-  that already holds different content keeps its own and reports a conflict.
+- **once:** created if absent, never overwritten, and never deleted by the
+  sync. A receiver that already holds different content keeps its own and
+  reports a conflict. `snif-arc`'s retention removes or clears old ones on
+  each node (section 4.1).
   `csr/` files travel only through the `CSR` request, never through the queue
   (section 5).
 - **certificate:** the receiver keeps whichever certificate has the later
@@ -338,6 +340,25 @@ Rules per class:
     modification times, which the sync preserves.
   - `log/<cn>.log` holds `snif-certd`'s one-hour retry throttle, which is
     per node on purpose.
+
+### 4.1 Retention
+
+The sync never deletes anything. Old state is removed by `snif-arc`, which
+runs daily on every node, for each period the operator sets in `snif.conf`
+(`ca-proxy/README`, "snif-arc"): a device a year after its newest certificate
+expired, a name never approved after its allocation period, older archived
+certificates, and, after a short period, the account an approval names and
+the approval counters. Its rules read only modification times and contents,
+which the sync keeps equal across nodes, so every node removes the same files
+on its own run, with no message between the nodes.
+
+Between two nodes' runs, one node lacks or has changed a file the other still
+has. Reconciliation (section 7.4) would repair that difference and undo the
+removal, so it leaves alone any difference in which every copy is older than
+its horizon, `SNIF_CLUSTER_RECONCILE_DAYS` (**default** 7). Every retention
+period must be longer than the horizon. A `FETCH` (section 7.2) still takes a
+missing `cfg` or `auth` from a peer that has not run yet; the next run removes
+it again.
 
 `apns/` must sync. A device sends its wake token
 (`SNIF MSG <host> apns=<token>`) to the node it is connected to, and only
@@ -665,7 +686,8 @@ once the peer has the file on disk. `csr/` never goes through the queue
   (section 4) and reject `..` and anything else. That is what keeps `etc/` and
   every secret out of the channel.
 - **A dangling entry** (the file is gone) is dropped and logged, never turned
-  into a deletion. Nothing synced is ever deleted.
+  into a deletion. The sync never deletes a synced file; retention is each
+  node's own (section 4.1).
 - **A node sends only the files written on it,** and never passes on a file
   it received. A file whose writer stopped before reaching every peer spreads
   through reconciliation (section 7.4).
@@ -691,7 +713,7 @@ Unix socket `var/snif-syncd.sock`, one request per line:
 | `RELEASE <cn>` | `OK` | `snif-certd` |
 | `FETCH <path>` | `FOUND`, `NONE`, `UNREACHABLE` | `snif-cert.php`, `snif-auth.php`, `snif-certd` |
 | `STATUS` | lines ending with `END` | `snif-syncd status` |
-| `RECONCILE [<peer>]` | `OK pulled=… pushed=… conflicts=… failed=…` | `snif-syncd reconcile`, daily |
+| `RECONCILE [<peer>]` | `OK pulled=… pushed=… conflicts=… failed=… old=…` | `snif-syncd reconcile`, daily |
 | `SEED <peer>` | the same | `snif-syncd seed`, for a new node (section 3.2) |
 | `PEER <node>` | none: the rest of the connection is that peer's session | `snif-syncd --serve <node>` |
 
@@ -751,6 +773,13 @@ Requests on the path of a client's HTTP request (`CSR`, `LEASE`, `GET` for a
 `snif-syncd reconcile` runs daily and on demand. It goes through every listed
 peer in turn, exchanging `LIST` both ways.
 - Anything missing on one side, or older there, is queued.
+- **The horizon:** a difference in which every copy is older than
+  `SNIF_CLUSTER_RECONCILE_DAYS` (**default** 7; 0 for none) is left alone and
+  counted as `old`. Such a difference is what `snif-arc` leaves between two
+  nodes' runs: a certificate archived, or a record removed or cleared, on one
+  node first (section 4.1). Anything written since travels through the queue.
+  Counters (each taken only from its own node) and a seed are not limited, so
+  a node that was down for longer than the horizon catches up with a seed.
 - A missing CSR is copied with the `CSR` request under the CSR lease, never
   with `PUT`.
 - A once-file whose content differs between the two sides is a conflict and
@@ -788,14 +817,14 @@ directories equal to its listed peers, so queuing needs no running daemon.
 | `ca-proxy/inc/snif-auth-ves.php`, `snif-auth-captcha.php` | Per-node counter files, added up on read; enqueue |
 | `ca-proxy/bin/snif-certd` | `ENSURE` before a first certificate; take the certificate lease and `FETCH` the peers' certificates before issuing; give up past the lease duration; drop the `unlink` before the `rename` of a new certificate; enqueue `crt/` and `.err`; find the challenge record by following the alias of `_acme-challenge.<name>`; send each DNS-01 update to every nameserver of that zone with a timeout, wait on those that answered it, and retry failed removals (section 9) |
 | `ca-proxy/bin/snif-apnsd` | Write tokens to a temp file and rename (today it rewrites the file in place); enqueue |
-| `ca-proxy/bin/snif-arc` | None; it runs on each node |
+| `ca-proxy/bin/snif-arc` | Retention (section 4.1); it runs on each node |
 | `ca-proxy/mkdirs` | For each listed peer, `sync-queue/<peer>/` and the FIFO pair; can run again after the peers change. The ca-proxy install runs it |
 | `ca-proxy/bin/snif-relay`, `etc/snif.conf` | New settings `SNIF_CLUSTER_NODE`, `SNIF_CLUSTER_PEERS` (each peer's node name and address), `SNIF_CLUSTER_LEASE`; `SNIF_RELAY_SRV` names this node. `snif-relay` itself needs no change |
 | `snifd/fifo.c`, `snifd/host.c`, `snifd/ctl.c` | Hold a `CONNECT` for a host with no control connection here; drop it on `CLEAR`, `CLOSE` or the client timeout, with a cap; `snif_ctl_sethost` sends the held lines (section 2.1). Optional: drop a `CONNECT` from an input FIFO that names an unknown service address |
 | `snifd/sock.c` | A connect timeout per address in `snif_sock_connect` (**default** 5 s), instead of a blocking connect (section 9) |
 | snifdog | One config per base domain, in `/etc/snif/snifdog.d/`, each run by its own `snifdog@<base>` unit, or by the example cron entry (`/usr/share/snifdog/`), which runs a `snifdog poll` pass for every config in the directory. A config there defaults its state directory to `/var/lib/snif/snifdog/<base>`, and a pass takes a lock on its state directory, since today nothing stops two passes sharing state. The existing `/etc/snif/snifdog.conf` keeps working as before. It runs on each node |
 | New | `ca-proxy/bin/snif-syncd` and its unit; `ca-proxy/inc/snif-cluster.php`; `ca-proxy/bin/snif-tunnel <peer>` and the template unit `snif-tunnel@<peer>.service`, one instance per peer |
-| Tests | `snifd/test/held.sh`, `snifd/test/conntmout.sh`, `ca-proxy/test/syncd.t` (three nodes), `ca-proxy/test/cluster.t` (two nodes end to end, with the PHP and a local CA), and new cases in `certd-dns.t` and `apnsd.t` |
+| Tests | `snifd/test/held.sh`, `snifd/test/conntmout.sh`, `ca-proxy/test/syncd.t` (three nodes), `ca-proxy/test/cluster.t` (two nodes end to end, with the PHP and a local CA), `ca-proxy/test/arc.t` (retention), and new cases in `certd-dns.t` and `apnsd.t` |
 
 About the `unlink` in `snif-certd`: `getcert` deletes the old certificate and
 then renames the new one into place. The rename alone replaces the old one in

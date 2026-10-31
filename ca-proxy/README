@@ -253,6 +253,33 @@ snif-arc needs to run once a day: enable snif-arc.timer (systemctl enable
     root bundle, crt/{SNIF_domain}.crt next to etc/{SNIF_domain}.pub-ca, is
     not an issued certificate and stays in crt/.
 
+    It also removes old state, for each of these that /etc/snif/snif.conf
+    sets to a number of days. Unset, nothing is removed, as before 1.12:
+    - SNIF_ARC_DEVICE_DAYS: an approved name whose newest certificate
+      expired this many days ago, or that was approved this long ago and
+      never issued: its cfg/, auth/, csr/, crt/, log/ and arc/ files. A
+      device down for less than this comes back without a new approval.
+    - SNIF_ARC_UNAPPROVED_DAYS: a name allocated this many days ago that was
+      never approved and has no certificate: its cfg/, csr/, crt/*.err and
+      log/ files.
+      Any request to an initialization origin's root allocates a name.
+    - SNIF_ARC_OLD_DAYS: an archived certificate that is not its name's
+      newest, this many days after it was archived. The newest stays while
+      the name does: snif-certd reads it to tell a renewal from a first
+      certificate.
+    - SNIF_ARC_AUTH_DAYS: an approval this old is rewritten to "1", as a
+      captcha approval writes, so it no longer names the account that gave
+      it; the device still renews, since only the file's presence counts.
+      Approval-counter entries this old are dropped, and captcha counters
+      removed. A per-account limit (etc/{email}.ves-limit) whose bucket takes
+      longer than this to empty is loosened by it.
+    A rewritten file keeps its modification time and mode. Each run reports
+    its counts in one line on stdout, which the timer's journal keeps; a
+    failure makes the run exit non-zero. In a relay cluster
+    every node runs it, and every period must be longer than snif-syncd's
+    reconciliation horizon (SNIF_CLUSTER_RECONCILE_DAYS, default 7,
+    doc/cluster.md 4.1). test/arc.t covers it.
+
 snif-apnsd is an optional process that sends APNS notifications to wake up
     a sleeping iOS device to serve an incoming connection, as long as the
     device has registered with APNS and has communicated the hex APNS ID to
@@ -275,7 +302,11 @@ snif-syncd keeps the CA proxy state of a relay cluster in step across its
     nodes on one host. With SNIF_CLUSTER_JUDGE ("<zone>@<server>", key in
     etc/<zone>.tsig, needs Net::DNS) a DNS zone on one nameserver gives the
     deciding vote on a CSR while a node is down or cut off (doc/cluster.md
-    5.1); test/judge.t runs two nodes and a throwaway named.
+    5.1); test/judge.t runs two nodes and a throwaway named. Reconciliation
+    leaves alone a difference in which every copy is older than
+    SNIF_CLUSTER_RECONCILE_DAYS (default 7, 0 for none), so that it does
+    not undo snif-arc on a node that ran first; after a node was down for
+    longer, run "snif-syncd seed <peer>" on it.
 
 
 CONTENTS:

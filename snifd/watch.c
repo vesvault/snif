@@ -78,18 +78,11 @@ void snif_watch_free(snif_sock *sock) {
     return snif_sock_free(sock);
 }
 
-void snif_watch_restart(snif_sock *sock) {
+void snif_watch_connect(snif_sock *sock) {
 #ifdef SNIF_DEBUG
-    printf("snif_watch_restart fd=%d\n", sock->fd);
+    printf("snif_watch_connect rhost=%s rport=%s\n", sock->watch.rhost, sock->watch.rport);
 #endif
     struct pollfd *pollfd = &sock->listen->pollfds[sock->listenidx];
-    snif_buf_free(sock->rd);
-    snif_buf_free(sock->wr);
-    snif_watch_logclose(sock);
-    snif_sock_shutdown(sock);
-    sock->rd = sock->wr = NULL;
-    if (sock->watch.ssl) SSL_free(sock->watch.ssl);
-    sock->watch.ssl = NULL;
     snif_cert_reset(sock->watch.cert);
     sock->fd = snif_sock_connect(sock->watch.rhost, sock->watch.rport);
     if (sock->fd >= 0) {
@@ -102,14 +95,52 @@ void snif_watch_restart(snif_sock *sock) {
     snif_watch_logopen(sock);
 }
 
+/* The wait before reconnecting once this connection ends: none if the relay
+   has answered on it, else the retry timeout, doubling with each further
+   connection that ends unanswered, up to SNIF_WATCH_MAXRETRY */
+static int snif_watch_backoff(snif_sock *sock) {
+    int delay = sock->watch.backoff;
+    int retry = sock->listen->tmout.retry;
+    sock->watch.backoff = delay < retry ? retry : (delay < SNIF_WATCH_MAXRETRY / 2 ? delay * 2 : SNIF_WATCH_MAXRETRY);
+    return delay;
+}
+
+void snif_watch_restart(snif_sock *sock) {
+#ifdef SNIF_DEBUG
+    printf("snif_watch_restart fd=%d\n", sock->fd);
+#endif
+    int delay = snif_watch_backoff(sock);
+    snif_buf_free(sock->rd);
+    snif_buf_free(sock->wr);
+    snif_watch_logclose(sock);
+    snif_sock_shutdown(sock);
+    sock->rd = sock->wr = NULL;
+    if (sock->watch.ssl) SSL_free(sock->watch.ssl);
+    sock->watch.ssl = NULL;
+    if (!delay) return snif_watch_connect(sock);
+    snif_log("watch retry=%d", delay);
+    sock->listen->pollfds[sock->listenidx].fd = -1;
+    snif_sock_tmout(sock, delay);
+}
+
+/* No connection: 1 while the wait set by snif_watch_restart() or a failed
+   connect runs */
+static int snif_watch_waiting(snif_sock *sock) {
+    if (sock->chktime <= snif_time()) return 0;
+    if (sock->listen->chktime > sock->chktime) sock->listen->chktime = sock->chktime;
+    return 1;
+}
+
 void snif_watch_error(snif_sock *sock) {
-    snif_watch_free(sock);
+    snif_sock_done(sock);
 }
 
 void snif_watch_pollfn(snif_sock *sock, struct pollfd *pollfd) {
     if (!pollfd || sock->fd < 0) switch (sock->listen->shutdn) {
 	case 0:
-	    return snif_watch_restart(sock);
+	    if (sock->fd >= 0) return snif_watch_restart(sock);
+	    if (snif_watch_waiting(sock)) return;
+	    return snif_watch_connect(sock);
 	case 1:
 	    return;
 	default:
@@ -120,6 +151,8 @@ void snif_watch_pollfn(snif_sock *sock, struct pollfd *pollfd) {
     if (sock->rd) {
 	int bytes = snif_sock_rw(sock, pollfd, sock->watch.ssl);
 	if (bytes >= 0) {
+	    /* the relay answers only once it has taken the LISTEN */
+	    if (sock->rd->len) sock->watch.backoff = 0;
 	    if (bytes > 0) {
 		sock->watch.alive = sock->listen->tmout.alive;
 		snif_sock_tmout(sock, sock->listen->tmout.watch);
@@ -200,6 +233,7 @@ snif_sock *snif_watch(const char *rhost, const char *rport, struct snif_cert *ce
     skconn->watch.cert = cert;
     skconn->watch.ssl = NULL;
     skconn->watch.alive = 0;
+    skconn->watch.backoff = lstn->tmout.retry;
     skconn->fd = fd;
     skconn->pollfn = &snif_watch_pollfn;
     skconn->listen = lstn;

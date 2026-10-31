@@ -86,6 +86,7 @@ typedef struct snif_sock {
 		    struct snif_watch_port *ports;
 		    const char *rhost;
 		    const char *rport;
+		    int backoff;
 		} watch;
 		struct {
 		    struct snif_cert *cert;

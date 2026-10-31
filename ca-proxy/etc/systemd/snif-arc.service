@@ -1,5 +1,6 @@
 # snif-arc archives the SNIF certificates older than 75 days, so that
-# snif-certd issues a fresh one the next time the connector asks (README).
+# snif-certd issues a fresh one the next time the connector asks, and
+# applies the retention periods set in snif.conf (README).
 # snif-arc.timer runs it daily; enable the timer, not this unit.
 
 [Unit]

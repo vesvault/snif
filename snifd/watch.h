@@ -23,6 +23,11 @@
 
 #define	SNIF_WATCH_BUFSIZE	4096
 
+/* The longest wait before reconnecting to the relay, s */
+#ifndef SNIF_WATCH_MAXRETRY
+#define	SNIF_WATCH_MAXRETRY	300
+#endif
+
 typedef struct snif_watch_port {
     const char *port;
     const char *lhost;

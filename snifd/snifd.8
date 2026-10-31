@@ -65,6 +65,10 @@ then connects outbound to a relay
 .RB ( \-r )
 and forwards accepted streams to local or backend services. A device never
 re\-keys: a new key gets a new hostname.
+When the relay connection ends or its TLS handshake fails, the connector
+reconnects: at once if the relay had answered on that connection, otherwise
+after 15 seconds, doubling with each further connection the relay ends
+without answering, up to 5 minutes.
 .PP
 Invoked with invalid arguments,
 .B snifd
