@@ -69,15 +69,62 @@ $SyncSock = "$BaseDir/var/snif-syncd.sock";
 $QueueDir = "$BaseDir/sync-queue";
 $CrtLease = $ENV{SNIF_CLUSTER_LEASE} || `. $SnifConf 2>/dev/null; echo -n \$SNIF_CLUSTER_LEASE;` || 600;
 
+# The daemon logs to log/log_snif-certd, and each issue's steps to
+# log/<domain>.log. Unless SNIF_SYSLOG is 0, no, off or false, every line also
+# goes to syslog (facility daemon, as snif-certd[pid]), an issue's steps with
+# the domain in front, at a priority that says what it is: err for a failed
+# step or a refused DNS update. SNIF_SYSLOG_PATH, for tests: a unix socket to
+# send to instead of the system's syslog.
+$SyslogSetting = $ENV{SNIF_SYSLOG} // `. $SnifConf 2>/dev/null; echo -n \$SNIF_SYSLOG;`;
+$Syslog = 0;
+
+# A line to $log, and to syslog once the daemon has opened it, at $pri (a
+# syslog priority name, info by default). LOG is the issue's log/<domain>.log.
 sub dlog {
-    my ($log, $msg) = @_;
+    my ($log, $msg, $pri) = @_;
     my @t = localtime;
     printf $log "%02d/%02d/%02d %02d:%02d:%02d [%d]: %s\n", $t[4] + 1, $t[3], $t[5] % 100, $t[2], $t[1], $t[0], $$, $msg;
+    return if !$Syslog;
+    $msg = "$ErrDomain: $msg" if "$log" =~ /(^|::)LOG$/ && $ErrDomain && index($msg, $ErrDomain) < 0;
+    syslog_copy($pri || 'info', $msg);
 }
 
 sub flog {
     my ($log, $f, $tag, $er) = @_;
-    dlog($log, $tag . ': ' . ($f? 'OK' : 'ERROR') . ($er ? ' ' . $er : ''));
+    dlog($log, $tag . ': ' . ($f? 'OK' : 'ERROR') . ($er ? ' ' . $er : ''), $f ? 'info' : 'err');
+}
+
+# ---- syslog: the same in snif-syncd and snif-apnsd. Logging never stops the
+# daemon: a syslog that cannot be reached loses the copy, not the line.
+
+sub syslog_wanted { return ($_[0] // '') !~ /^\s*(0|no|off|false)\s*$/i }
+
+# Returns '' once open, else why not.
+sub syslog_open {
+    my ($ident, $path) = @_;
+    # Sys::Syslog sends to the system's socket when a path is not there.
+    return "no socket at $path" if $path && !-S $path;
+    return eval {
+	require Sys::Syslog;
+	Sys::Syslog::setlogsock($path ? { type => 'unix', path => $path } : 'native') || die "setlogsock failed\n";
+	Sys::Syslog::openlog($ident, 'pid,nofatal', 'daemon');
+	1;
+    } ? '' : ($@ =~ /^(.*?)(?: at \S+ line \d+.*)?$/s)[0];
+}
+
+sub syslog_copy {
+    my ($pri, $msg) = @_;
+    local $SIG{__WARN__} = sub { };
+    local $@;
+    eval { Sys::Syslog::syslog($pri, '%s', $msg) };
+}
+
+# The __DIE__ hook: a fatal error goes to syslog as well as to the log. $^S is
+# undef, not true, while a module compiles, so an error that an eval inside it
+# catches (a probe for an optional module that is not there, as JSON::MaybeXS
+# does under Crypt::LE) also comes here: only a defined, false $^S is fatal.
+sub fatal_to_syslog {
+    syslog_copy('err', 'fatal: ' . ($_[0] =~ s/\s+\z//r)) if $Syslog && defined $^S && !$^S;
 }
 
 # Persist a terminal issuance error for $domain so the HTTP endpoint can deliver
@@ -218,7 +265,7 @@ sub getcert {
 	my $why;
 	($sync, $why) = cluster_prepare($domain);
 	if (!$sync) {
-	    dlog(STDERR, "$domain: not issued now: $why");
+	    dlog(STDERR, "$domain: not issued now: $why", 'warning');
 	    return -5;
 	}
 	if (-e("$CertDir/$domain.crt") && (stat("$CertDir/$domain.crt"))[9] > time - 86400) {
@@ -478,7 +525,7 @@ sub process_challenge_dns {
     my @accepted = grep { $rs{$_} eq 'ok' } sort keys %rs;
     my @answered = grep { $rs{$_} ne 'no answer' } sort keys %rs;
     foreach my $ns (sort keys %rs) {
-	dlog(STDERR, "update $name TXT $challenge->{record} on $ns: $rs{$ns}") if $rs{$ns} ne 'ok';
+	dlog(STDERR, "update $name TXT $challenge->{record} on $ns: $rs{$ns}", 'err') if $rs{$ns} ne 'ok';
     }
     return 0 if !@accepted;
     push @ChallengeRRs, {zone => $zone, key => $key, name => $name, value => $challenge->{record},
@@ -507,7 +554,7 @@ sub challenge_target {
 	my $zone = zone_of($name);
 	return ("$name.", $zone) if $zone;
     }
-    dlog(STDERR, "challenge: could not follow _acme-challenge.$host, using snif-pool.$base");
+    dlog(STDERR, "challenge: could not follow _acme-challenge.$host, using snif-pool.$base", 'warning');
     return ("snif-pool.$base.", $base);
 }
 
@@ -563,10 +610,10 @@ sub cleanup_challenges {
 	my $rs = dns_update($zone, $ns, $key, Net::DNS::rr_del("$name TXT $value"));
 	next if $rs eq 'ok';
 	if ($t < time - $PendingDays * 86400) {
-	    dlog(STDERR, "cleanup: giving up removing $name TXT $value from $ns ($rs)");
+	    dlog(STDERR, "cleanup: giving up removing $name TXT $value from $ns ($rs)", 'err');
 	    next;
 	}
-	dlog(STDERR, "cleanup: could not remove $name TXT $value from $ns ($rs), will retry");
+	dlog(STDERR, "cleanup: could not remove $name TXT $value from $ns ($rs), will retry", 'warning');
 	push @left, $d;
     }
     pending_save(@left);
@@ -589,7 +636,7 @@ sub pending_save {
 	print $fh join("\t", @$_), "\n" foreach @p;
 	return if close($fh) && rename("$PendingFile+", $PendingFile);
     }
-    dlog(STDERR, "cleanup: could not write $PendingFile: $!");
+    dlog(STDERR, "cleanup: could not write $PendingFile: $!", 'err');
 }
 
 # Wait until every nameserver that answered each update serves the value, so
@@ -629,7 +676,7 @@ sub txt_served {
 sub log_challenge {
     my ($ch, $p) = @_;
     if ($ch->{error}) {
-	dlog($p->{logfd}, "verify: $ch->{error}");
+	dlog($p->{logfd}, "verify: $ch->{error}", 'err');
     }
     return 1;
 }
@@ -641,7 +688,14 @@ close STDERR;
 open STDERR, ">>$LogDir/log_snif-certd";
 select STDERR;
 $| = 1;
-dlog(STDERR, "starting snif-certd");
+if (syslog_wanted($SyslogSetting)) {
+    my $why = syslog_open('snif-certd', $ENV{SNIF_SYSLOG_PATH});
+    $Syslog = $why eq '';
+    dlog(STDERR, "SNIF_SYSLOG: cannot use syslog ($why), no copy goes there") if !$Syslog;
+}
+# A fatal error from here on is in the log; syslog gets it too.
+$SIG{__DIE__} = \&fatal_to_syslog;
+dlog(STDERR, "starting snif-certd", 'notice');
 
 
 while (1) {
@@ -654,7 +708,7 @@ while (1) {
 	dlog(STDERR, "<< $_");
 	if (/SNIF CERT (\S+)/) {
 	    my $r = getcert $1;
-	    dlog(STDERR, "getcert: $r") if ($r);
+	    dlog(STDERR, "getcert: $r", $r == -3 ? 'err' : $r == -4 ? 'warning' : 'info') if ($r);
 	}
     }
     close CTL;

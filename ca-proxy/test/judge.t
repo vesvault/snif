@@ -30,6 +30,8 @@ use POSIX ();
 
 my $syncd = shift || "$FindBin::Bin/../bin/snif-syncd";
 $| = 1;
+# The daemons log to their files only, never to this host's syslog.
+$ENV{SNIF_SYSLOG} = 0;
 my ($Named) = grep { -x } ('/usr/sbin/named', '/usr/bin/named');
 my ($Keygen) = grep { -x } ('/usr/sbin/tsig-keygen', '/usr/bin/tsig-keygen');
 my $Dig = `command -v dig 2>/dev/null` =~ s/\s+$//r;

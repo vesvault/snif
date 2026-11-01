@@ -697,8 +697,8 @@ once the peer has the file on disk. `csr/` never goes through the queue
   (**default**). That catches a lost ping and a writer that never pinged.
 - **Health:** the age of the oldest entry per peer (the symlink's own
   modification time) shows whether that link works. `snif-syncd status`
-  prints it, and the daemon logs when it passes a threshold (**default**
-  300 s).
+  prints it, and past a threshold (**default** 300 s) marks the queue
+  `STALE`, which the logged status line carries at warning (section 7.5).
 
 ### 7.2 Local interface
 
@@ -796,6 +796,37 @@ CSR ever accepted, and it is snifdog's record of the right key for each name.
 Without it, the new node's snifdog reports every renewal of an existing
 device as never provisioned. Section 3.2 gives the order of the steps around
 seeding.
+
+### 7.5 Logging
+
+`snif-syncd` logs to `log/log_snif-syncd`, and copies each line to syslog
+(facility daemon, `snif-syncd[pid]`) unless `SNIF_SYSLOG` is `0`, as
+`snif-certd` and `snif-apnsd` do. A host that ships its journal then ships
+what the cluster's failures look like, at a priority to filter on:
+
+| Line | Priority |
+|---|---|
+| `starting snif-syncd, node <n>, peers <p>...` | notice |
+| `peer <p>: up` | notice |
+| `peer <p>: down (<why>)`, at each failed attempt while it stays down | warning |
+| `status: ...`, while a peer is not up or a queue is `STALE` | warning |
+| `status: ...`, while all is well | info |
+| `conflict: ...` | err |
+| `judge <cn>: SET` or `SAME` | info |
+| `judge <cn>: DIFFERENT` | notice |
+| `judge <cn>: <anything else>`: the judge gave no verified answer | err |
+| `csr <cn>: accepted without <p>..., queued for them` | notice |
+| a fatal error, as `fatal: ...` | err |
+
+The status line is `snif-syncd status` on one line:
+`status: peer <p> <state> queue=<n> oldest=<s>s[ STALE]; ...; judge last=<s>s <result>; conflicts <n>`
+(the judge part only with one). It comes every hour (**default**) while every
+listed peer is up and no queue is stale, else every 5 minutes (**default**),
+and 5 minutes after a peer goes down. So a peer down for 10 minutes shows in
+at least one status line besides its `down` lines, and a node whose status
+lines stop for over an hour has a `snif-syncd`, or a log path, that stopped.
+Those are the two signals to alert on: `down` alone repeats with the
+reconnect backoff and comes back `up` after a peer's restart.
 
 ## 8. Changes to existing components
 

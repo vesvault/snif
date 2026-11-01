@@ -44,6 +44,15 @@
 # listed peer, as before. SNIF_CLUSTER_RECONCILE_DAYS (default 7, 0 for none)
 # is reconciliation's horizon (section 7.4).
 #
+# The daemon logs to log/log_snif-syncd and, unless SNIF_SYSLOG is 0, no, off
+# or false, copies each line to syslog (facility daemon, as snif-syncd[pid]),
+# at a priority that says what it is: warning for a peer down, err for a
+# conflict or a judge that gave no answer. A status line, the peers' states,
+# queues and the judge's last answer, comes every $StatusEvery seconds while
+# every peer is up and no queue is stale, else every $StatusDown seconds, so
+# its absence says the daemon or its log stopped. SNIF_SYSLOG_PATH, for tests:
+# a unix socket to send to instead of the system's syslog.
+#
 # Only core Perl modules are used, and Net::DNS with SNIF_CLUSTER_JUDGE.
 
 use strict;
@@ -61,7 +70,7 @@ use Time::Local qw(timegm);
 
 our $VERSION = '1';
 
-my %Conf = conf(qw(SNIF_CA_PROXY SNIF_CLUSTER_NODE SNIF_CLUSTER_PEERS SNIF_CLUSTER_LEASE SNIF_CLUSTER_PEER_CMD SNIF_CLUSTER_JUDGE SNIF_CLUSTER_RECONCILE_DAYS));
+my %Conf = conf(qw(SNIF_CA_PROXY SNIF_CLUSTER_NODE SNIF_CLUSTER_PEERS SNIF_CLUSTER_LEASE SNIF_CLUSTER_PEER_CMD SNIF_CLUSTER_JUDGE SNIF_CLUSTER_RECONCILE_DAYS SNIF_SYSLOG));
 our $BaseDir = $Conf{SNIF_CA_PROXY};
 our $Node = $Conf{SNIF_CLUSTER_NODE};
 our %Peers = map { /^([^=]+)=(.*)$/ ? ($1 => $2) : () } split(' ', $Conf{SNIF_CLUSTER_PEERS} // '');
@@ -94,6 +103,8 @@ our $RetryDelay = 1;		# random delay up to this after a partial grant
 our $ScanEvery = 60;
 our $HealthAge = 300;
 our $BackoffMax = 30;
+our $StatusEvery = 3600;	# the status line, while all is well
+our $StatusDown = 300;		# and while a peer is not up or a queue is stale
 # Reconciliation leaves alone a difference in which every copy is older than
 # this many days (section 7.4); 0 repairs every difference, as before 1.12.
 our $ReconcileDays = ($Conf{SNIF_CLUSTER_RECONCILE_DAYS} // '') =~ /^\s*(\d+(?:\.\d+)?)\s*$/ ? $1 : 7;
@@ -102,7 +113,7 @@ our $ReconcileDays = ($Conf{SNIF_CLUSTER_RECONCILE_DAYS} // '') =~ /^\s*(\d+(?:\
 foreach (split ' ', $ENV{SNIF_SYNCD_SET} // '') {
     my ($k, $v) = split(/=/, $_, 2);
     no strict 'refs';
-    ${"main::$k"} = $v if $k =~ /^(Deadline|LongDeadline|PingEvery|PingMiss|CSRLease|CrtLease|Margin|CSRWait|RetryDelay|ScanEvery|HealthAge|BackoffMax|ReconcileDays)$/;
+    ${"main::$k"} = $v if $k =~ /^(Deadline|LongDeadline|PingEvery|PingMiss|CSRLease|CrtLease|Margin|CSRWait|RetryDelay|ScanEvery|HealthAge|BackoffMax|ReconcileDays|StatusEvery|StatusDown)$/;
 }
 
 our $NameRe = qr/[A-Za-z0-9][A-Za-z0-9_-]{0,31}/;
@@ -122,10 +133,48 @@ sub conf {
     return %c;
 }
 
+# A line to the log, and to syslog once the daemon has opened it, at $pri
+# (a syslog priority name, info by default).
+our $Syslog = 0;
 sub dlog {
-    my ($msg) = @_;
+    my ($msg, $pri) = @_;
     my @t = localtime;
     printf STDERR "%02d/%02d/%02d %02d:%02d:%02d [%d]: %s\n", $t[4] + 1, $t[3], $t[5] % 100, $t[2], $t[1], $t[0], $$, $msg;
+    syslog_copy($pri // 'info', $msg) if $Syslog;
+}
+
+# ---- syslog ---------------------------------------------------------------
+# The same in snif-certd and snif-apnsd. Logging never stops the daemon: a
+# syslog that cannot be reached loses the copy, not the line in the file.
+
+sub syslog_wanted { return ($_[0] // '') !~ /^\s*(0|no|off|false)\s*$/i }
+
+# Returns '' once open, else why not.
+sub syslog_open {
+    my ($ident, $path) = @_;
+    # Sys::Syslog sends to the system's socket when a path is not there.
+    return "no socket at $path" if $path && !-S $path;
+    return eval {
+	require Sys::Syslog;
+	Sys::Syslog::setlogsock($path ? { type => 'unix', path => $path } : 'native') || die "setlogsock failed\n";
+	Sys::Syslog::openlog($ident, 'pid,nofatal', 'daemon');
+	1;
+    } ? '' : ($@ =~ /^(.*?)(?: at \S+ line \d+.*)?$/s)[0];
+}
+
+sub syslog_copy {
+    my ($pri, $msg) = @_;
+    local $SIG{__WARN__} = sub { };
+    local $@;
+    eval { Sys::Syslog::syslog($pri, '%s', $msg) };
+}
+
+# The __DIE__ hook: a fatal error goes to syslog as well as to the log. $^S is
+# undef, not true, while a module compiles, so an error that an eval inside it
+# catches (a probe for an optional module that is not there) also comes here:
+# only a defined, false $^S is fatal.
+sub fatal_to_syslog {
+    syslog_copy('err', 'fatal: ' . ($_[0] =~ s/\s+\z//r)) if $Syslog && defined $^S && !$^S;
 }
 
 # ---- paths and classes (section 4) ----------------------------------------
@@ -262,7 +311,7 @@ our %Conflicts;
 sub conflict {
     my ($rel, $from) = @_;
     $Conflicts{$rel} = $from // '?';
-    dlog("conflict: $rel differs from " . ($from // '?') . ", kept ours");
+    dlog("conflict: $rel differs from " . ($from // '?') . ", kept ours", 'err');
 }
 
 # ---- the event loop -------------------------------------------------------
@@ -334,6 +383,7 @@ sub loop {
 	}
 	sess_tick();
 	judge_tick();
+	status_tick();
 	my $wait = @Timers ? $Timers[0][0] - time : 1;
 	$wait = 1 if $wait > 1;
 	$wait = 0 if $wait < 0;
@@ -576,11 +626,11 @@ sub sess_start {
 	if (($rs // '') =~ /^HELLO (\S+) \S+$/ && $1 eq $peer) {
 	    $s->{state} = 'up';
 	    $s->{backoff} = 1;
-	    dlog("peer $peer: up");
+	    dlog("peer $peer: up", 'notice');
 	    queue_requeue($peer);
 	    queue_kick($peer);
 	} else {
-	    dlog("peer $peer: bad HELLO reply: " . ($rs // 'none'));
+	    dlog("peer $peer: bad HELLO reply: " . ($rs // 'none'), 'warning');
 	    close_any($s, 'bad hello');
 	}
     }, 'line', 1);
@@ -597,7 +647,8 @@ sub sess_down {
     delete @$s{qw(fh wfh pid)};
     $s->{next_try} = time + $s->{backoff};
     $s->{backoff} = $s->{backoff} * 2 > $BackoffMax ? $BackoffMax : $s->{backoff} * 2;
-    dlog("peer $s->{peer}: down ($why)") if $was ne 'down';
+    dlog("peer $s->{peer}: down ($why)", 'warning') if $was ne 'down';
+    status_soon() if $was eq 'up';
     my @fail = (@{$s->{inflight} || []}, @{$s->{urgent} || []}, @{$s->{bulk} || []});
     $s->{inflight} = []; $s->{urgent} = []; $s->{bulk} = [];
     foreach my $r (@fail) { $r->{cb}->(undef) if $r->{cb} }
@@ -866,9 +917,9 @@ sub enqueue_csr {
 	my $entry = "$QueueDir/$peer/csr/$cn.csr";
 	(my $dir = $entry) =~ s{/[^/]+$}{};
 	make_path($dir, { mode => 02775 }) if !-d $dir;
-	symlink("$BaseDir/csr/$cn.csr", $entry) || $! == EEXIST || dlog("enqueue csr/$cn.csr for $peer: $!");
+	symlink("$BaseDir/csr/$cn.csr", $entry) || $! == EEXIST || dlog("enqueue csr/$cn.csr for $peer: $!", 'err');
     }
-    dlog("csr $cn: accepted without " . join(' ', @peers) . ", queued for them");
+    dlog("csr $cn: accepted without " . join(' ', @peers) . ", queued for them", 'notice');
 }
 
 # Deliver an owed CSR from the queue: under a lease, as any CSR. A peer that
@@ -880,7 +931,7 @@ sub csr_deliver {
     (my $cn = $rel) =~ s{^csr/(.*)\.csr$}{$1};
     my $data = slurp("$BaseDir/$rel");
     if (!defined $data) {
-	dlog("queue $peer: $rel is gone, dropped");
+	dlog("queue $peer: $rel is gone, dropped", 'notice');
 	unlink $inflight;
 	return queue_kick($peer);
     }
@@ -986,7 +1037,7 @@ sub judge_done {
     delete $Judge{fileno $j->{fh}};
     close $j->{fh};
     %JudgeLast = (result => $r, at => time);
-    dlog("judge $j->{cn}: $r");
+    dlog("judge $j->{cn}: $r", $r =~ /^(SET|SAME)$/ ? 'info' : $r eq 'DIFFERENT' ? 'notice' : 'err');
     $j->{cb}->($r =~ /^(SET|SAME|DIFFERENT)$/ ? $1 : undef);
 }
 
@@ -1042,7 +1093,7 @@ sub queue_kick {
 	my $inflight = "$QueueDir/$peer/.inflight/$rel";
 	my ($class) = classify($rel);
 	if (!$class || ($class eq 'csr' && !$JudgeZone)) {
-	    dlog("queue $peer: refusing $rel");
+	    dlog("queue $peer: refusing $rel", 'warning');
 	    unlink $entry;
 	    next;
 	}
@@ -1052,7 +1103,7 @@ sub queue_kick {
 	return csr_deliver($peer, $rel, $inflight) if $class eq 'csr';
 	my $data = slurp("$BaseDir/$rel");
 	if (!defined $data) {
-	    dlog("queue $peer: $rel is gone, dropped");
+	    dlog("queue $peer: $rel is gone, dropped", 'notice');
 	    unlink $inflight;
 	    next;
 	}
@@ -1065,7 +1116,7 @@ sub queue_kick {
 		queue_requeue_one($peer, $rel);
 		return;
 	    }
-	    dlog("queue $peer: $rel: $rs") if $rs !~ /^(OK|KEPT)$/;
+	    dlog("queue $peer: $rel: $rs", 'warning') if $rs !~ /^(OK|KEPT)$/;
 	    unlink $inflight;
 	    queue_kick($peer);
 	});
@@ -1108,7 +1159,7 @@ sub enqueue {
 	    my $entry = "$QueueDir/$peer/$rel";
 	    (my $dir = $entry) =~ s{/[^/]+$}{};
 	    make_path($dir, { mode => 02775 }) if !-d $dir;
-	    symlink("$BaseDir/$rel", $entry) || $! == EEXIST || dlog("enqueue $rel for $peer: $!");
+	    symlink("$BaseDir/$rel", $entry) || $! == EEXIST || dlog("enqueue $rel for $peer: $!", 'err');
 	}
     }
 }
@@ -1248,6 +1299,37 @@ sub status_text {
     return join('', map { "$_\n" } @l) . "END\n";
 }
 
+# The status as one log line, on a timer: every $StatusEvery seconds while
+# every listed peer is up and no queue is stale, at warning and every
+# $StatusDown seconds while not, and $StatusDown after a peer goes down.
+#   status: peer <p> <state> queue=<n> oldest=<s>s[ STALE]; ...[; judge last=<s>s <result>|none]; conflicts <n>
+our $NextStatus = 0;
+sub status_line {
+    my ($bad, @l) = (0);
+    foreach my $p (sort keys %Peers) {
+	my ($n, $age) = queue_oldest($p);
+	my $st = $Sess{$p} ? $Sess{$p}{state} : 'down';
+	$bad = 1 if $st ne 'up' || $age > $HealthAge;
+	push @l, "peer $p $st queue=$n oldest=${age}s" . ($age > $HealthAge ? " STALE" : "");
+    }
+    push @l, "judge last=" . ($JudgeLast{at} ? sprintf("%ds %s", time - $JudgeLast{at}, $JudgeLast{result}) : "none") if $JudgeZone;
+    push @l, "conflicts " . scalar(keys %Conflicts);
+    return ("status: " . join('; ', @l), $bad);
+}
+
+sub status_tick {
+    my $now = time;
+    return if $now < $NextStatus;
+    my ($line, $bad) = status_line();
+    dlog($line, $bad ? 'warning' : 'info');
+    $NextStatus = $now + ($bad ? $StatusDown : $StatusEvery);
+}
+
+sub status_soon {
+    my $t = time + $StatusDown;
+    $NextStatus = $t if $t < $NextStatus;
+}
+
 # ---- command line -----------------------------------------------------------
 
 sub client {
@@ -1314,8 +1396,16 @@ if ($JudgeSetting =~ /\S/) {
 
 open(STDERR, '>>', $LogFile) if !$ENV{SNIF_SYNCD_STDERR};
 STDERR->autoflush(1);
+if (syslog_wanted($Conf{SNIF_SYSLOG})) {
+    my $why = syslog_open('snif-syncd', $ENV{SNIF_SYSLOG_PATH});
+    $Syslog = $why eq '';
+    dlog("SNIF_SYSLOG: cannot use syslog ($why), no copy goes there") if !$Syslog;
+}
+# A fatal error from here on is in the log; syslog gets it too.
+$SIG{__DIE__} = \&fatal_to_syslog;
 dlog("starting snif-syncd, node $Node, peers " . join(' ', sort keys %Peers)
-    . ($JudgeZone ? ", judge $JudgeZone\@$JudgeServer#$JudgePort" : ''));
+    . ($JudgeZone ? ", judge $JudgeZone\@$JudgeServer#$JudgePort" : ''), 'notice');
+$NextStatus = time + $StatusDown;
 umask(0002);
 unlink $Sock;
 my $um = umask(0007);
@@ -1330,7 +1420,7 @@ make_path("$QueueDir/$_", { mode => 02775 }) foreach keys %Peers;
 foreach my $d (glob("$QueueDir/*")) {
     (my $p = $d) =~ s{.*/}{};
     next if exists $Peers{$p} || !-d $d;
-    dlog("dropping the queue of $p, which is no longer listed");
+    dlog("dropping the queue of $p, which is no longer listed", 'notice');
     File::Path::remove_tree($d);
 }
 queue_requeue($_) foreach keys %Peers;

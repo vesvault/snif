@@ -1,5 +1,22 @@
 snif NEWS -- history of user-visible changes
 
+Version 1.13
+------------
+
+* ca-proxy: snif-certd, snif-apnsd and snif-syncd copy every line they
+  log to syslog (facility daemon), as well as to their files in log/, at
+  a priority that says what it is: warning for a peer down or a name not
+  issued now, err for a failed issue step, a refused DNS update, a sync
+  conflict or a judge with no answer. Until now they wrote to files that a
+  host's log shipping does not read, so a cluster peer down, which pauses
+  enrolment without a judge, was seen only on the node. SNIF_SYSLOG=0 in
+  snif.conf keeps the files only. snif-apnsd, where it cannot write log/,
+  logs to syslog only instead of stderr. snif-syncd also logs a status
+  line, its peers, queues and judge: hourly while all is well, every 5
+  minutes while a peer is not up or a queue is stale, so a node whose
+  status lines stop has stopped (doc/cluster.md 7.5). test/syslog.t
+  covers it.
+
 Version 1.12
 ------------
 

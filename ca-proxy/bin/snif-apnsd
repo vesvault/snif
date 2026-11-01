@@ -75,7 +75,10 @@ sub apns_rspfn {
     my ($hdrs, $body, $token) = @_;
     my %hdrs = @$hdrs;
     return if $hdrs{':status'} == 200;
-    dlog(STDERR, "apns_rspfn");
+    (my $why = $body // '') =~ s/\s+/ /g;
+    $why =~ s/^ | $//g;
+    dlog(STDERR, "apns_rspfn: status $hdrs{':status'}" . (length $why ? ": $why" : ''), 'warning');
+    return if $SyslogOnly;
     for (keys %hdrs) {
 	print STDERR "$_: $hdrs{$_}\n";
     }
@@ -116,7 +119,7 @@ sub sync_enqueue {
     foreach my $q (grep { -d } glob("$BaseDir/sync-queue/*")) {
 	mkdir "$q/apns", 02775 if !-d "$q/apns";
 	symlink("$BaseDir/$rel", "$q/$rel") || $!{EEXIST}
-	    || dlog(STDERR, "cannot queue $rel in $q: $! (run mkdirs as root after a peer is added)");
+	    || dlog(STDERR, "cannot queue $rel in $q: $! (run mkdirs as root after a peer is added)", 'err');
     }
     require IO::Socket::UNIX;
     if (my $s = IO::Socket::UNIX->new(Peer => "$BaseDir/var/snif-syncd.sock", Type => Socket::SOCK_STREAM())) {
@@ -141,10 +144,48 @@ sub host_check {
     $Atime{$host} = time;
 }
 
+# Unless SNIF_SYSLOG is 0, no, off or false, every line also goes to syslog
+# (facility daemon, as snif-apnsd[pid]) at a priority that says what it is.
+# Without log/ (below), the lines go to syslog only: stderr is then the
+# journal, which would get each line twice. SNIF_SYSLOG_PATH, for tests: a
+# unix socket to send to instead of the system's syslog.
+$SyslogSetting = $ENV{SNIF_SYSLOG} // `. $SnifConf 2>/dev/null; echo -n \$SNIF_SYSLOG;`;
+$Syslog = 0;
+$SyslogOnly = 0;
+
+# A line to $log, and to syslog once the daemon has opened it, at $pri (a
+# syslog priority name, info by default).
 sub dlog {
-    my ($log, $msg) = @_;
+    my ($log, $msg, $pri) = @_;
     my @t = localtime;
-    printf $log "%02d/%02d/%02d %02d:%02d:%02d [%d]: %s\n", $t[4] + 1, $t[3], $t[5] % 100, $t[2], $t[1], $t[0], $$, $msg;
+    printf $log "%02d/%02d/%02d %02d:%02d:%02d [%d]: %s\n", $t[4] + 1, $t[3], $t[5] % 100, $t[2], $t[1], $t[0], $$, $msg
+	if !$SyslogOnly;
+    syslog_copy($pri || 'info', $msg) if $Syslog;
+}
+
+# ---- syslog: the same in snif-syncd and snif-certd. Logging never stops the
+# daemon: a syslog that cannot be reached loses the copy, not the line.
+
+sub syslog_wanted { return ($_[0] // '') !~ /^\s*(0|no|off|false)\s*$/i }
+
+# Returns '' once open, else why not.
+sub syslog_open {
+    my ($ident, $path) = @_;
+    # Sys::Syslog sends to the system's socket when a path is not there.
+    return "no socket at $path" if $path && !-S $path;
+    return eval {
+	require Sys::Syslog;
+	Sys::Syslog::setlogsock($path ? { type => 'unix', path => $path } : 'native') || die "setlogsock failed\n";
+	Sys::Syslog::openlog($ident, 'pid,nofatal', 'daemon');
+	1;
+    } ? '' : ($@ =~ /^(.*?)(?: at \S+ line \d+.*)?$/s)[0];
+}
+
+sub syslog_copy {
+    my ($pri, $msg) = @_;
+    local $SIG{__WARN__} = sub { };
+    local $@;
+    eval { Sys::Syslog::syslog($pri, '%s', $msg) };
 }
 
 # Loaded rather than run (e.g. by a test with do/require): define the subs only.
@@ -153,13 +194,18 @@ return 1 if caller;
 # The log file where it can be written, else stderr, which systemd sends to
 # the journal: as the snif-apnsd user, which is not in snif-rw, it cannot
 # reach log/ (README, "Users and groups").
-if (open(my $log, '>>', "$LogDir/log_snif-apnsd")) {
-    open(STDERR, '>&', $log);
-}
+my $to_file = open(my $log, '>>', "$LogDir/log_snif-apnsd");
+open(STDERR, '>&', $log) if $to_file;
 select STDERR;
 $| = 1;
-dlog(STDERR, "starting snif-apnsd");
-dlog(STDERR, "SNIF_APNS_BUNDLE is not set in $SnifConf: storing wake tokens, sending no pushes") if !$BundleId;
+if (syslog_wanted($SyslogSetting)) {
+    my $why = syslog_open('snif-apnsd', $ENV{SNIF_SYSLOG_PATH});
+    $Syslog = $why eq '';
+    $SyslogOnly = $Syslog && !$to_file;
+    dlog(STDERR, "SNIF_SYSLOG: cannot use syslog ($why), no copy goes there") if !$Syslog;
+}
+dlog(STDERR, "starting snif-apnsd", 'notice');
+dlog(STDERR, "SNIF_APNS_BUNDLE is not set in $SnifConf: storing wake tokens, sending no pushes", 'warning') if !$BundleId;
 
 
 while (1) {

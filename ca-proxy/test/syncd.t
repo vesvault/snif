@@ -20,6 +20,8 @@ use Time::HiRes qw(time sleep);
 
 my $syncd = shift || "$FindBin::Bin/../bin/snif-syncd";
 $| = 1;
+# The daemons log to their files only, never to this host's syslog.
+$ENV{SNIF_SYSLOG} = 0;
 my ($pass, $fail) = (0, 0);
 sub check {
     my ($ok, $what) = @_;

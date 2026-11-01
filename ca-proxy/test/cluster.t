@@ -23,6 +23,8 @@ use FindBin;
 use Time::HiRes qw(time sleep);
 use POSIX ();
 $| = 1;
+# The daemons log to their files only, never to this host's syslog.
+$ENV{SNIF_SYSLOG} = 0;
 
 my $Src = "$FindBin::Bin/..";
 my ($pass, $fail) = (0, 0);

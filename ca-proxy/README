@@ -308,6 +308,22 @@ snif-syncd keeps the CA proxy state of a relay cluster in step across its
     not undo snif-arc on a node that ran first; after a node was down for
     longer, run "snif-syncd seed <peer>" on it.
 
+Logging. snif-certd, snif-apnsd and snif-syncd log to their files in log/
+    (log_snif-certd, log_snif-apnsd, log_snif-syncd, and each issue's steps
+    in log/{domain}.log), and copy every line to syslog, facility daemon,
+    as snif-certd[pid] and so on, at a priority that says what it is:
+    warning for a peer down or a name not issued now, err for a failed
+    issue step, a refused DNS update or a sync conflict. An issue's steps
+    go there with the domain in front. A host that ships its journal ships
+    them with nothing more to set up. SNIF_SYSLOG=0 in /etc/snif/snif.conf
+    (also no, off or false) keeps them in the files only, as before 1.13.
+    snif-apnsd, where it cannot write log/, logs to syslog only, where
+    before it wrote to stderr. snif-syncd also logs a status line, its
+    peers, queues and judge on one line: hourly while all is well, every
+    5 minutes while a peer is not up or a queue is stale, so a node whose
+    status lines stop has stopped (doc/cluster.md 7.5). test/syslog.t
+    covers it.
+
 
 CONTENTS:
 
