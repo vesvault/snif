@@ -1,5 +1,60 @@
 snif NEWS -- history of user-visible changes
 
+Version 1.14
+------------
+
+* ca-proxy: a proof of work, SNIF's own, can approve a certificate
+  without a VES account, in place of Cloudflare Turnstile. The browser
+  solves a challenge the CA proxy signs (GET <auth url>?pow, then the
+  solution in X-SNIF-Captcha); no outside service is asked. The challenge
+  is bound to the name, so a solution approves that name only.
+  etc/pow.secret, the signing key, switches it on; etc/pow.maxnumber sets
+  the work (default 20000000). Turnstile stays as an option: a relay with
+  etc/turnstile.secret and no pow.secret approves by Turnstile as before.
+  With both, the proof of work is used and the Turnstile files are
+  ignored; with neither, only VES approves, as before. The authorization
+  page at snif.host now solves the proof of work and no longer shows the
+  Turnstile widget, so a relay that keeps Turnstile serves its own page
+  (etc/authpage). Each of these files can be set per domain, as
+  etc/<domain>.authpage is: etc/<domain>.pow.secret, .pow.maxnumber,
+  .turnstile.secret and .turnstile.sitekey stand for their domain over
+  the relay's, and an empty .pow.secret or .turnstile.secret turns that
+  kind off there (to require VES under one domain, say). Two more
+  changes come with it, for either kind: an approval records "1", as the
+  README always said, instead of the approver's address; and the
+  per-address counter in auth/captcha is named by a keyed hash of the
+  address, an IPv6 one by its /64, instead of an unkeyed MD5 that gave
+  the address away. test/pow.t and test/turnstile.t cover it.
+
+* ca-proxy: approvals by proof of work or Turnstile have two more
+  limits a day: 20 per IPv6 /48, since one client can hold a whole /48
+  (a tunnel broker hands them out free) and so has thousands of /64s;
+  and 200 per domain. etc/captcha-limit sets them, with the 5 per
+  address and the relay's 200 ("address=5 net=20 domain=200 day=200"),
+  and etc/<domain>.captcha-limit a domain's own. The new counters,
+  net-<day>-<hash> and dom-<day>-<domain> in auth/captcha, sync between
+  the nodes of a cluster, and snif-arc trims them. In a cluster, install
+  this on every node and then restart snif-syncd on each: an older
+  snif-syncd refuses the new counters, and until it takes them each node
+  counts the /48 and domain limits alone. test/captcha-domains.t covers
+  it.
+
+* ca-proxy: the approval counters, VES and CAPTCHA, and their
+  directories are created group-writable. The web server's umask (0022
+  for php-fpm) left them writable by its own user alone, and a root
+  make install chowns the whole tree to snif (as snif-arc does a VES
+  counter it trims). After that the web server could no longer write
+  them: every later VES approval for that account failed with a 500, and
+  the day's CAPTCHA quota stopped counting. A VES counter that cannot be
+  written now gets the 403 that a failed write always gave. Where the
+  web server runs as its own user (snif-www since 1.10), make the
+  existing counters group-writable once, as root:
+
+    find <ca-proxy>/auth/ves <ca-proxy>/auth/captcha ! -perm -g+w \
+        -exec chmod g+w {} +
+
+  test/auth-counters.t covers it.
+
 Version 1.13
 ------------
 

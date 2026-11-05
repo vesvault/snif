@@ -248,8 +248,14 @@ optional APNS wake-up daemon for sleeping iOS devices.
 - **`snifd` binds `:443`** as root inside the container (Docker's default
   capability set includes `NET_BIND_SERVICE`); it holds no keys. Run it under a
   dedicated user with a file capability if you want stricter least-privilege.
-- **Interactive authorization** for device certs is handled by the same VES /
-  Turnstile flow as the public relay; configure `etc/turnstile.*` on the volume
-  to gate issuance with a CAPTCHA. See [`ca-proxy/README`](../ca-proxy/README).
+- **Interactive authorization** for device certs is handled by the same flow
+  as the public relay: VES by default. To also let a browser approve a
+  certificate by solving a proof of work, with no VES account, put a secret in
+  `etc/pow.secret` on the volume (`head -c 32 /dev/urandom | base64`). It is
+  off until you do, because anyone who can reach your CA proxy could then get
+  certificates under your domain, within the daily limits. Cloudflare Turnstile
+  is the other option (`etc/turnstile.secret` and `etc/turnstile.sitekey`); it
+  needs your own authorization page, since the one at snif.host does not show
+  the widget. See [`ca-proxy/README`](../ca-proxy/README).
 - Full trust model: [security-model.md](../security-model.md). Report issues
   via [SECURITY.md](../SECURITY.md).

@@ -118,6 +118,10 @@ spew("$B/auth/ves/single\@example.com", "$t40\n", 40 * $D);
 spew("$B/auth/captcha/n1/day-20250101", "3", 40 * $D);
 spew("$B/auth/captcha/n1/ip-20250101-" . ('a' x 32), "1", 40 * $D);
 spew("$B/auth/captcha/n1/day-20990101", "1", 5 * $D);
+spew("$B/auth/captcha/n1/net-20250101-" . ('b' x 32), "1", 40 * $D);
+spew("$B/auth/captcha/n1/dom-20250101-x.test", "2", 40 * $D);
+spew("$B/auth/captcha/n1/dom-20990101-x.test", "1", 5 * $D);
+spew("$B/auth/captcha/n1/notes", "kept", 40 * $D);
 
 my $before_ok = mtime("$B/auth/ok-old.x.test.auth");
 my $before_user = mtime("$B/auth/ves/n1/user\@example.com");
@@ -126,7 +130,7 @@ my ($rc, $out) = run($B, SNIF_ARC_DEVICE_DAYS => 365, SNIF_ARC_UNAPPROVED_DAYS =
     SNIF_ARC_OLD_DAYS => 90, SNIF_ARC_AUTH_DAYS => 30);
 chomp $out;
 check($rc == 0, "a run with every period set exits 0 ($rc)");
-check($out eq "snif-arc: archived 1, devices removed 2, unapproved names removed 1, older archived copies removed 3, approvals cleared 2, counter files trimmed 5",
+check($out eq "snif-arc: archived 1, devices removed 2, unapproved names removed 1, older archived copies removed 3, approvals cleared 2, counter files trimmed 7",
     "and reports what it did: $out");
 
 check(!grep({ -e "$B/$_" } qw(cfg/dev-gone.x.test.cfg auth/dev-gone.x.test.auth csr/dev-gone.x.test.csr log/dev-gone.x.test.log), "arc/$A/dev-gone.x.test.crt"),
@@ -165,6 +169,9 @@ check(!-e "$B/auth/ves/single\@example.com", "so is one in a single relay's auth
 check(mtime("$B/auth/ves/n1/same\@example.com") == $before_same, "a recent counter is not rewritten");
 check(!-e "$B/auth/captcha/n1/day-20250101" && !-e "$B/auth/captcha/n1/ip-20250101-" . ('a' x 32) && -e "$B/auth/captcha/n1/day-20990101",
     "captcha counters over 30 days old removed, a recent one kept");
+check(!-e "$B/auth/captcha/n1/net-20250101-" . ('b' x 32) && !-e "$B/auth/captcha/n1/dom-20250101-x.test"
+    && -e "$B/auth/captcha/n1/dom-20990101-x.test", "so are a /48's and a domain's");
+check(-e "$B/auth/captcha/n1/notes", "and a file with no counter's name is left, however old");
 
 ($rc, $out) = run($B, SNIF_ARC_DEVICE_DAYS => 365, SNIF_ARC_UNAPPROVED_DAYS => 30,
     SNIF_ARC_OLD_DAYS => 90, SNIF_ARC_AUTH_DAYS => 30);

@@ -76,40 +76,52 @@ function ves_api_req($meth, $uri, $hdrs, $data=NULL) {
 }
 
 
+# Counts an approval for account $e. A leaky bucket: each approval adds one,
+# and one leaks out per refill time. An approval appends its time to the file;
+# in a cluster each node appends to its own (auth/ves/<node>/<email>) and the
+# bucket replays the approvals of them all in time order. Answers 429 and exits
+# while the bucket is full; otherwise returns whether the approval was written.
+function snif_auth_ves_count($e) {
+    list($max, $refill) = snif_auth_ves_limit($e);
+    $leak = function ($n, $dt) use ($refill) { return $refill > 0 && $dt > 0 ? max(0, $n - $dt / $refill) : $n; };
+    $ts = [];
+    foreach (snif_cluster_counter_files($GLOBALS['VESauthDir'], $e) as $cf) $ts = array_merge($ts, snif_auth_ves_times($cf));
+    sort($ts);
+    $n = 0;
+    $t0 = 0;
+    foreach ($ts as $t) {
+	$n = $leak($n, $t - $t0) + 1;
+	$t0 = $t;
+    }
+    if ($leak($n, time() - $t0) > $max) {
+	header('HTTP/1.0 429 Too Many Requests');
+	exit;
+    }
+    $f = snif_cluster_counter_dir($GLOBALS['VESauthDir']) . "/$e";
+    # A run of "*" without a time gets its time before the line ends.
+    $s = (string)@file_get_contents($f);
+    # Group-writable: a root install chowns the tree to snif, and bin/snif-arc
+    # replaces a counter it trims as snif, keeping its mode. Under the web
+    # server's umask (0022 for php-fpm) either leaves a file this user can no
+    # longer append to.
+    $um = umask(0002);
+    $fd = fopen($f, "a");
+    umask($um);
+    # One that still cannot be opened is refused like a failed write; PHP
+    # has logged why.
+    if (!$fd) return false;
+    $ok = fwrite($fd, ($s !== '' && substr($s, -1) !== "\n" ? ' ' . filemtime($f) . "\n" : '') . time() . "\n") !== false;
+    return fclose($fd) && $ok;
+}
+
 function snif_auth_ves() {
     $hp = explode('.', $_SERVER['HTTP_X_VES_AUTHORIZATION']);
     if ($hp[0] == 'vaultItem') {
 	$rs = ves_api_req('GET', 'vaultItems/' . $hp[1] . '?fields=file(creator(email))', ['Authorization: Bearer ' . $hp[2]]);
 	$e = str_replace('/', '', $rs->file->creator->email);
-	if ($e) {
-	    # A leaky bucket: each approval adds one, and one leaks out per
-	    # refill time. An approval appends its time to the file; in a cluster
-	    # each node appends to its own (auth/ves/<node>/<email>) and the
-	    # bucket replays the approvals of them all in time order.
-	    list($max, $refill) = snif_auth_ves_limit($e);
-	    $leak = function ($n, $dt) use ($refill) { return $refill > 0 && $dt > 0 ? max(0, $n - $dt / $refill) : $n; };
-	    $ts = [];
-	    foreach (snif_cluster_counter_files($GLOBALS['VESauthDir'], $e) as $cf) $ts = array_merge($ts, snif_auth_ves_times($cf));
-	    sort($ts);
-	    $n = 0;
-	    $t0 = 0;
-	    foreach ($ts as $t) {
-		$n = $leak($n, $t - $t0) + 1;
-		$t0 = $t;
-	    }
-	    if ($leak($n, time() - $t0) > $max) {
-		header('HTTP/1.0 429 Too Many Requests');
-		exit;
-	    }
-	    $f = snif_cluster_counter_dir($GLOBALS['VESauthDir']) . "/$e";
-	    # A run of "*" without a time gets its time before the line ends.
-	    $s = (string)@file_get_contents($f);
-	    $fd = fopen($f, "a");
-	    fwrite($fd, ($s !== '' && substr($s, -1) !== "\n" ? ' ' . filemtime($f) . "\n" : '') . time() . "\n");
-	    if (fclose($fd)) {
-		if (snif_cluster_node()) snif_cluster_enqueue("auth/ves/" . snif_cluster_node() . "/$e");
-		return $e;
-	    }
+	if ($e && snif_auth_ves_count($e)) {
+	    if (snif_cluster_node()) snif_cluster_enqueue("auth/ves/" . snif_cluster_node() . "/$e");
+	    return $e;
 	}
 	header('HTTP/1.0 403 Forbidden');
 	exit;

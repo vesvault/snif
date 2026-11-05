@@ -89,10 +89,16 @@ function snif_cluster_have($rel) {
 }
 
 # The directory this node writes counter files in: <dir>/<node> in a cluster.
+# Made group-writable, as the sync queue is: a root install chowns it to snif,
+# and bin/snif-arc trims counters in it as snif.
 function snif_cluster_counter_dir($dir) {
     $node = snif_cluster_node();
     if (!$node) return $dir;
-    if (!is_dir("$dir/$node")) @mkdir("$dir/$node", 02775, true);
+    if (!is_dir("$dir/$node")) {
+	$um = umask(0002);
+	@mkdir("$dir/$node", 02775, true);
+	umask($um);
+    }
     return "$dir/$node";
 }
 

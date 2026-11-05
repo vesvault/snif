@@ -191,7 +191,7 @@ sub classify {
     return ('newest') if $p =~ m{^crt/$CNRe\.err$};
     return ('newest') if $p =~ m{^apns/_[\w.-]+\.apns$};
     return ('counter', $1) if $p =~ m{^auth/ves/($NameRe)/[^/.\0][^/\0]*$};
-    return ('counter', $1) if $p =~ m{^auth/captcha/($NameRe)/(?:day-\d{8}|ip-\d{8}-[0-9a-f]{32})$};
+    return ('counter', $1) if $p =~ m{^auth/captcha/($NameRe)/(?:day-\d{8}|(?:ip|net)-\d{8}-[0-9a-f]{32}|dom-\d{8}-$CNRe)$};
     return undef;
 }
 

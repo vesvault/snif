@@ -27,8 +27,8 @@ logrotatedir = /etc/logrotate.d
 # - etc/ holds the secrets and per-domain settings, so its example files are
 #   copied only where absent; state and logs are kept. A secret there whose
 #   owner or mode is not as below is reported, not changed: the keys are
-#   0600 snif, the APNs key 0600 snif-apnsd, and the PHP's turnstile.secret
-#   is group snif-rw.
+#   0600 snif, the APNs key 0600 snif-apnsd, and the PHP's pow.secret
+#   and turnstile.secret, a domain's own too, are group snif-rw.
 # - The tree is chowned before mkdirs runs, so that mkdirs gives snifd's
 #   pipes back to snifd.
 # - The units include snif-arc.timer, which runs snif-arc daily and so lets

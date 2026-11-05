@@ -105,8 +105,8 @@ Users and groups. snifd faces the internet and the PHP endpoints take
       it; snif-www and snif-apnsd are not.
     - The keys in etc/ are 0600 snif: .tsig, .priv-ca and account.key, which
       only snif-certd reads. The APNs key, apns.key (apns-dev.key for
-      development), is 0600 snif-apnsd. turnstile.secret, which the PHP
-      reads, is 0640 group snif-rw.
+      development), is 0600 snif-apnsd. pow.secret and turnstile.secret,
+      which the PHP reads, are 0640 group snif-rw.
     The install makes snif, snifd, snif-apnsd, snif-www, snif-rw and
     snif-ctl, and on every run puts them, and snif-peer where it exists, in
     the groups above. It removes no one, and reports any other member of
@@ -215,18 +215,69 @@ etc/{SNIF_domain}.authpage (optional) overrides the interactive authorization
     e.g. https://snif.example.com/auth?authUrl= (the connector's polling URL is
     appended). Falls back to etc/authpage, then to https://snif.host/auth .
 
-etc/turnstile.secret and etc/turnstile.sitekey enable the optional Cloudflare
-    Turnstile CAPTCHA authorization for the interactive certificate
-    authorization page (the in-browser counterpart of VES vaultItem auth).
-    turnstile.secret holds the Turnstile secret key; its presence enables the
-    CAPTCHA verification in inc/snif-auth-captcha.php, which checks each token
-    against it. turnstile.sitekey holds the matching public site key. When BOTH
-    files are present the authorization page defaults to a Turnstile challenge,
-    whose token is verified against the paired secret; if either is absent the
-    page defaults to VES vaultItem authorization. Cloudflare provides a test
-    site/secret pair that always passes (1x00000000000000000000AA and
-    1x0000000000000000000000000000000AA) for local testing. To use your own
-    Turnstile account, replace both files with a matching site/secret pair.
+etc/pow.secret (optional) enables approval by proof of work: a certificate
+    approved without a VES account, by a browser that solves a challenge
+    (inc/snif-auth-captcha.php). It is off by default: without the file (or
+    etc/turnstile.secret, below), only VES approves. With it, GET <auth
+    url>?pow answers a challenge for that name, the request carrying the
+    solution in X-SNIF-Captcha approves it, and the authorization page is
+    told to approve that way ("&pow=1"). The file holds the key the
+    challenges are signed with, e.g.
+        head -c 32 /dev/urandom | base64 > etc/pow.secret
+    Every node of a relay cluster needs the same one. Approvals this way are
+    limited per day (etc/captcha-limit, below). No outside service is asked.
+
+etc/pow.maxnumber (optional) sets the work: one number, the top of the range
+    the secret in each challenge is drawn from. A browser tries half of it on
+    average. Default 20000000.
+
+etc/{SNIF_domain}.pow.secret, .pow.maxnumber, .turnstile.secret and
+    .turnstile.sitekey (optional) stand for that domain over the files
+    without the prefix (above and below), as etc/{SNIF_domain}.authpage does.
+    An empty etc/{SNIF_domain}.pow.secret or .turnstile.secret turns that
+    kind off for the domain, e.g. to require VES under one domain of a relay
+    that has etc/pow.secret, or to put one domain on Turnstile. A domain's
+    own pow.secret signs its challenges; the per-address counters stay the
+    relay's, keyed by etc/pow.secret, else etc/turnstile.secret, so that an
+    address counts the same under every domain (only on a relay with
+    neither file does each domain count its addresses apart). Give a
+    .secret file, empty or not, the mode of the others (0640, group
+    snif-rw), or the install reports it.
+
+etc/turnstile.secret and etc/turnstile.sitekey (optional) enable approval by
+    Cloudflare Turnstile instead, for a relay that prefers it to the proof of
+    work. If etc/pow.secret is there too, the proof of work is used and these
+    are ignored. turnstile.secret holds the Turnstile secret key; its presence
+    enables the check: a token in X-SNIF-Captcha, or in the
+    cf-turnstile-response form field, approves the name if Cloudflare's
+    siteverify accepts it. turnstile.sitekey holds the matching public site
+    key; with both files the authorization page is told to show the widget
+    ("&sitekey=<key>"), and with the secret alone it defaults to VES. The
+    same limits apply. Each check asks Cloudflare, and the page that shows
+    the widget runs Cloudflare's script and sends it the visitor's address.
+    The authorization page at https://snif.host/auth does not show it, so a
+    relay that uses Turnstile serves its own page (etc/authpage, above).
+    Cloudflare provides a test site/secret pair that always passes
+    (1x00000000000000000000AA and 1x0000000000000000000000000000000AA) for
+    local testing.
+
+etc/captcha-limit and etc/{SNIF_domain}.captcha-limit (optional) set the
+    limits on approvals by proof of work or Turnstile, per UTC day. Each
+    holds any of these, as name=number, e.g. "address=5 net=20 domain=100":
+        address  per client address, an IPv6 one by its /64 (default 5)
+        net      per IPv6 /48, within which one client can hold many /64s
+                 (default 20)
+        domain   per domain (default 200)
+        day      for the whole relay (default 200); read from
+                 etc/captcha-limit only
+    A domain's file wins over etc/captcha-limit for that domain's approvals;
+    the address and /48 counters are the relay's either way, so with
+    address=5 an address that had 5 approved under one domain gets none
+    under another whose limit is 5. A refused approval gets 429. The
+    counters are in auth/captcha (in a relay cluster auth/captcha/{node}),
+    one file per day each: day-{day}, dom-{day}-{SNIF_domain}, and ip- and
+    net- named by a keyed hash of the address, so that the names do not
+    give it away.
 
 etc/{email}.ves-limit and etc/ves-limit (optional) limit the certificates a
     VES account approves (inc/snif-auth-ves.php). The approvals form a leaky

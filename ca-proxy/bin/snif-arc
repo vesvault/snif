@@ -252,13 +252,13 @@ if [ -n "$AuthDays" ]; then
 	    Trimmed=$((Trimmed + 1))
 	done < <(mtimes "$nd" '*')
     done
-    # Captcha counters (inc/snif-auth-captcha.php): one file per day, and
-    # per day and hashed address.
+    # Captcha counters (inc/snif-auth-captcha.php), each named by its day:
+    # the relay's, a domain's, a hashed address's and a hashed IPv6 /48's.
     for nd in "$BaseDir"/auth/captcha/*/ "$BaseDir"/auth/captcha; do
 	[ -d "$nd" ] || continue
 	while read -r t f; do
 	    [ "${t%.*}" -lt $cut ] || continue
-	    case "$f" in day-*|ip-*) ;; *) continue ;; esac
+	    case "$f" in day-*|dom-*|ip-*|net-*) ;; *) continue ;; esac
 	    remove "${nd%/}/$f"
 	    Trimmed=$((Trimmed + 1))
 	done < <(mtimes "$nd" '*')

@@ -89,18 +89,24 @@ if (file_exists("$AuthDir/$cn.auth") || (snif_cluster_node() && snif_cluster_req
     exit;
 }
 
-if (isset($_POST['cf-turnstile-response']) || isset($_SERVER['HTTP_X_SNIF_CAPTCHA'])) {
+# A proof-of-work challenge for this name (inc/snif-auth-captcha.php). It
+# comes after the check above, so a name approved already answers 202.
+if (isset($_GET['pow'])) {
     require "$BaseDir/inc/snif-auth-captcha.php";
-    $auth = snif_auth_captcha();
+    snif_pow_challenge($cn);
+}
+
+if (isset($_SERVER['HTTP_X_SNIF_CAPTCHA']) || isset($_POST['cf-turnstile-response'])) {
+    require "$BaseDir/inc/snif-auth-captcha.php";
+    $auth = snif_auth_captcha($cn);
 } else {
     require "$BaseDir/inc/snif-auth-ves.php";
     $auth = snif_auth_ves();
     if (!isset($auth)) {
 	# No credential presented: hand off to the interactive authorization page.
-	# When the central Turnstile account is configured (etc/turnstile.sitekey
-	# paired with the etc/turnstile.secret the captcha verifier checks against)
-	# the page presents Turnstile, so its token verifies against the same
-	# account. Absent either half, it defaults to VES.
+	# With a CAPTCHA on (inc/snif-auth-captcha.php), the page is told which:
+	# "&pow=1" to solve a proof of work, "&sitekey=..." to show Turnstile.
+	# Otherwise it defaults to VES.
 	# The interactive page origin is per-<base domain> config
 	# (etc/<base>.authpage), then a server-wide etc/authpage, then the public
 	# SNIF page. The value is the full prefix up to and including "?authUrl=".
@@ -110,10 +116,8 @@ if (isset($_POST['cf-turnstile-response']) || isset($_SERVER['HTTP_X_SNIF_CAPTCH
 	$AuthPageUrl = $pagefile ? trim(file_get_contents($pagefile)) : "";
 	if ($AuthPageUrl === "") $AuthPageUrl = "https://snif.host/auth?authUrl=";
 	$loc = $AuthPageUrl . "https://" . $_SERVER['HTTP_HOST'] . $_SERVER['REQUEST_URI'];
-	$sitekey = @trim(file_get_contents("$EtcDir/turnstile.sitekey"));
-	if ($sitekey && file_exists("$EtcDir/turnstile.secret")) {
-	    $loc .= '&sitekey=' . rawurlencode($sitekey);
-	}
+	require "$BaseDir/inc/snif-auth-captcha.php";
+	$loc .= snif_captcha_authpage_param($cn);
 	header("Location: $loc");
 	exit;
     }

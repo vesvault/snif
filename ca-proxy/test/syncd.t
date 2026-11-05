@@ -202,6 +202,13 @@ check(scalar(ask('b', 'STATUS') =~ m{^conflict cfg/snif-3\.x\.test\.cfg from a$}
     check(peer_ask($pc, $put->('csr/snif-9.x.test.csr'), $d) eq 'REJECT csr', "a csr/ path by PUT: REJECT csr");
     check(peer_ask($pc, $put->('etc/account.key'), $d) eq 'REJECT path', "an etc/ path: REJECT path");
     check(peer_ask($pc, $put->('cfg/../etc/x.cfg'), $d) eq 'REJECT path', "a path with ..: REJECT path");
+    # The CAPTCHA counters (inc/snif-auth-captcha.php), by their names only.
+    for my $n ('day-20261105', 'ip-20261105-' . ('a' x 32), 'net-20261105-' . ('b' x 32), 'dom-20261105-x.test') {
+	check(peer_ask($pc, $put->("auth/captcha/b/$n"), $d) eq 'OK', "b's CAPTCHA counter $n: OK");
+    }
+    for my $n ('net-20261105-' . ('B' x 32), 'dom-20261105-', 'dom-20261105-x..test', 'other-20261105') {
+	check(peer_ask($pc, $put->("auth/captcha/b/$n"), $d) eq 'REJECT path', "a CAPTCHA counter named $n: REJECT path");
+    }
     close $pc;
     my $nc = peer_conn('a', 'zz');
     check(peer_ask($nc, "LEASE crt:snif-1.x.test 60") eq 'REJECT member', "a node a does not list: LEASE gets REJECT member");
