@@ -1,5 +1,19 @@
 snif NEWS -- history of user-visible changes
 
+Version 1.15
+------------
+
+* snifd: a ClientHello that reaches the relay in more than one read is
+  no longer refused. The relay reads the client's name from what has
+  arrived and, while the hello is incomplete, waits for the rest; with
+  OpenSSL 3 the end of what had arrived counted as the end of the
+  connection, a fatal error, and the client got a decode_error alert
+  instead. A relay built with OpenSSL 1.1 was not affected. A hello with
+  a post-quantum key share (X25519MLKEM768, the default in OpenSSL 3.5
+  and in current browsers) is about 1.5 KB and always crosses the
+  network as two TCP segments, so whether it failed came down to timing.
+  snifd/test/split.sh covers it.
+
 Version 1.14
 ------------
 

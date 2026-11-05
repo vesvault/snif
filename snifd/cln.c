@@ -144,6 +144,10 @@ void snif_cln_pollfn(snif_sock *sock, struct pollfd *pollfd) {
 	}
     }
     BIO *bbuf = BIO_new_mem_buf(sock->rd->buf, sock->rd->len);
+    /* the end of what has arrived means "wait for more", as a socket would say:
+     * a plain end of file is fatal in OpenSSL 3, which then sends the client
+     * a decode_error alert, so a ClientHello in two reads failed */
+    BIO_set_mem_eof_return(bbuf, -1);
     BIO *bfd = BIO_new_fd(sock->fd, BIO_NOCLOSE);
     SSL *ssl = SSL_new(sock->cln.ctx);
     SSL_set_bio(ssl, bbuf, bfd);
