@@ -21,9 +21,14 @@
  **************************************************************************/
 
 
+#ifndef SNIF_PROXY_H
+#define SNIF_PROXY_H
+
 /* Max length of a PROXY protocol v1 line incl CRLF and NUL */
 #define	SNIF_PROXY_MAXHDR	128
 
 int snif_proxy_hdr(char *out, int outmax, const char *shost, const char *sport, const char *dhost, const char *dport);
 int snif_proxy_fwdhdr(char *out, int outmax, const char *shost, const char *sport, int lclfd);
 int snif_proxy_clnhdr(char *out, int outmax, int clnfd);
+
+#endif

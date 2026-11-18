@@ -21,6 +21,9 @@
  **************************************************************************/
 
 
+#ifndef SNIF_ABUSE_H
+#define SNIF_ABUSE_H
+
 #ifndef SNIF_ABUSE_MAX
 #define	SNIF_ABUSE_MAX		120
 #endif
@@ -29,3 +32,5 @@ extern unsigned short snif_abuse_sense;
 
 int snif_abuse(int fd, int grace);
 void snif_abuse_add(int fd, int abuse);
+
+#endif

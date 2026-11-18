@@ -21,6 +21,9 @@
  **************************************************************************/
 
 
+#ifndef SNIF_HOST_H
+#define SNIF_HOST_H
+
 /* Max CONNECT lines held from input FIFOs for hosts with no control connection here */
 #ifndef SNIF_HOST_MAXHELD
 #define	SNIF_HOST_MAXHELD	4096
@@ -40,3 +43,5 @@ void snif_host_chkalive(snif_host *host);
 void snif_host_hold(struct snif_host *host, const char *connid, const char *ntfy, int l, int tmout);
 void snif_host_unhold(const char *connid);
 void snif_host_sendheld(struct snif_host *host, struct snif_sock *ctl);
+
+#endif

@@ -21,7 +21,12 @@
  **************************************************************************/
 
 
+#ifndef SNIF_PORT_H
+#define SNIF_PORT_H
+
 struct snif_listen;
 struct snif_sock;
 
 struct snif_sock *snif_port(const char *host, const char *port, struct snif_listen *lstn, struct snif_sock * (* connfn)(struct snif_sock *));
+
+#endif

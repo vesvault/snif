@@ -21,6 +21,9 @@
  **************************************************************************/
 
 
+#ifndef SNIF_WATCH_H
+#define SNIF_WATCH_H
+
 #define	SNIF_WATCH_BUFSIZE	4096
 
 /* The longest wait before reconnecting to the relay, s */
@@ -42,3 +45,5 @@ struct snif_cert;
 struct snif_listen;
 
 struct snif_sock *snif_watch(const char *rhost, const char *rport, struct snif_cert *cert, struct snif_watch_port *ports, struct snif_listen *lstn);
+
+#endif

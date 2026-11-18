@@ -21,6 +21,9 @@
  **************************************************************************/
 
 
+#ifndef SNIF_MAP_H
+#define SNIF_MAP_H
+
 #define	SNIF_MAP_BUFSIZE	5120
 
 typedef struct snif_map {
@@ -37,3 +40,5 @@ typedef struct snif_map {
 snif_map *snif_map_add(char *host, const char *port, const char *dsthost, const char *dstport, int flags);
 snif_map *snif_map_find(const char *host, const char *port);
 struct snif_sock *snif_map_conn(snif_map *map, struct snif_sock *cln);
+
+#endif

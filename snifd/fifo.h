@@ -21,8 +21,13 @@
  **************************************************************************/
 
 
+#ifndef SNIF_FIFO_H
+#define SNIF_FIFO_H
+
 #define	SNIF_FIFO_BUFSIZE	16384
 
 struct snif_listen;
 
 struct snif_sock *snif_fifo(const char *fname, int write, struct snif_listen *lstn);
+
+#endif

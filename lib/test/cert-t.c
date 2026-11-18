@@ -21,6 +21,9 @@
 
 #define	DEAD_API	"http://127.0.0.1:9/"
 
+/* Not in cert.h: called directly, to build the CA proxy URL for a name */
+int snif_cert_download(snif_cert *cert);
+
 static int pass = 0, fail = 0;
 static const char *dir;
 static char crtpath[1024], keypath[1024], apiurl[256];
@@ -171,6 +174,24 @@ int main(int argc, char **argv) {
     check(cert.rootstore == store && !cert.alloc_rootstore, "reset leaves the caller's store set");
     snif_cert_init_ex(&cert, SNIF_F_KEYSPEC);
     check(cert.rootstore == store && snif_cert_ctx(&cert) != NULL, "init again keeps it, and verifies against it");
+    snif_cert_reset(&cert);
+
+    /* A name too long for the CA proxy URL: no request, and nothing
+     * written past the URL buffer. The name comes from the CA proxy's
+     * X-SNIF-CN, whose length nothing limits. */
+    char longcn[4096];
+    memset(longcn, 'a', sizeof(longcn) - 1);
+    memcpy(longcn, "*.", 2);
+    longcn[sizeof(longcn) - 1] = 0;
+    setup(&cert, "good.crt", store, DEAD_API);
+    cert.cn = strdup(longcn);
+    check(snif_cert_download(&cert) <= 0, "a name too long for the API URL is not downloaded");
+    check(snif_cert_error(&cert) == SNIF_CE_API, "  with SNIF_CE_API");
+    snif_cert_reset(&cert);
+    setup(&cert, "good.crt", store, NULL);
+    cert.cn = strdup(longcn);
+    check(snif_cert_download(&cert) <= 0, "  nor with the default API URL");
+    check(snif_cert_error(&cert) == SNIF_CE_API, "  with SNIF_CE_API");
     snif_cert_reset(&cert);
 
     X509_STORE_free(store);

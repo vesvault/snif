@@ -21,8 +21,13 @@
  **************************************************************************/
 
 
+#ifndef SNIF_SRV_H
+#define SNIF_SRV_H
+
 #define	SNIF_SRV_BUFSIZE	5120
 #define	SNIF_SRV_BUFLOW		4096
 #define	SNIF_SRV_ABUSE		90
 
 struct snif_sock *snif_srv(struct snif_sock *sock);
+
+#endif

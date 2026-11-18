@@ -21,6 +21,9 @@
  **************************************************************************/
 
 
+#ifndef SNIF_BUF_H
+#define SNIF_BUF_H
+
 typedef struct snif_buf {
     int max;
     int len;
@@ -41,3 +44,5 @@ int snif_buf_scanl(struct snif_buf *buf, int *cmdlen, ...);
 #define	snif_buf_readl(buf, ...)	snif_buf_scanl(buf, NULL, __VA_ARGS__)
 #define	snif_buf_eof(buf)	(!buf || (!buf->max && !buf->len))
 #define	snif_buf_free(buf)	free(buf)
+
+#endif

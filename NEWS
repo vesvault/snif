@@ -1,5 +1,20 @@
 snif NEWS -- history of user-visible changes
 
+Version 1.16
+------------
+
+* libsnif, snifd: a certificate name too long for the CA proxy URL no
+  longer overruns a buffer on the connector's stack. The connector takes
+  the name from the CA proxy's X-SNIF-CN header, whatever its length,
+  and built the URL for the CSR upload and the certificate download in
+  a 1024-byte buffer; a name of about 500 bytes overran it. Such a name
+  now fails like any failed request, with SNIF_CE_API, and the download
+  is retried as usual. The same name reached the 320-byte line that
+  snifd -r writes to a push FIFO (-p); a line that does not fit is now
+  left out. A name that long could only come from the CA proxy the
+  connector is set up to use. Found with CodeQL; lib/test/cert.sh
+  covers it.
+
 Version 1.15
 ------------
 

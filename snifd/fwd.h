@@ -21,6 +21,9 @@
  **************************************************************************/
 
 
+#ifndef SNIF_FWD_H
+#define SNIF_FWD_H
+
 struct snif_listen;
 struct snif_cert;
 struct snif_conn;
@@ -29,3 +32,5 @@ struct snif_watch_port;
 #define	SNIF_FWD_BUFSIZE	4096
 
 struct snif_sock *snif_fwd(struct snif_conn *conn, struct snif_watch_port *wp, struct snif_cert *cert, struct snif_listen *lstn);
+
+#endif

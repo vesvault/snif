@@ -353,10 +353,15 @@ const char *snif_cert_alloccn(snif_cert *cert) {
     return cert->cn = NULL;
 }
 
-static void snif_cert_apiurl(snif_cert *cert, char *buf, const char *suf) {
+/**************************************************************************
+ * The CA proxy URL for the certificate name, ending in suf. Returns 0 if
+ * it does not fit in size: the name can come from the CA proxy, in
+ * X-SNIF-CN, and nothing limits its length before this.
+ **************************************************************************/
+static int snif_cert_apiurl(snif_cert *cert, char *buf, size_t size, const char *suf) {
     const char *bn = snif_cert_basecn(cert);
-    sprintf(buf, "http://%s/snif-cert/%s.crt", bn, bn);
-    sprintf(buf, (cert->apiurl ? "%s%s%s" : "http://%s/snif-cert/%s%s"), (cert->apiurl ? cert->apiurl : bn), bn, suf);
+    int l = snprintf(buf, size, (cert->apiurl ? "%s%s%s" : "http://%s/snif-cert/%s%s"), (cert->apiurl ? cert->apiurl : bn), bn, suf);
+    return l >= 0 && (size_t) l < size;
 }
 
 static int snif_cert_sendreq(snif_cert *cert, X509_REQ *req) {
@@ -369,7 +374,7 @@ static int snif_cert_sendreq(snif_cert *cert, X509_REQ *req) {
     up.len = BIO_get_mem_data(bio, &up.buf);
     struct CURL *curl = snif_cert_curlfn(cert);
     char buf[1024];
-    snif_cert_apiurl(cert, buf, ".csr");
+    int urlok = snif_cert_apiurl(cert, buf, sizeof(buf), ".csr");
     curl_easy_setopt(curl, CURLOPT_URL, buf);
     struct curl_slist *hdrs = curl_slist_append(NULL, snif_cert_curlua(cert, buf));
     curl_easy_setopt(curl, CURLOPT_UPLOAD, 1L);
@@ -381,7 +386,7 @@ static int snif_cert_sendreq(snif_cert *cert, X509_REQ *req) {
     curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, &snif_cert_curlhdrfn);
     curl_easy_setopt(curl, CURLOPT_HEADERDATA, cert);
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, &snif_cert_curlignorefn);
-    int curlerr = curl_easy_perform(curl);
+    int curlerr = urlok ? curl_easy_perform(curl) : CURLE_URL_MALFORMAT;
     long code;
     if (curlerr == CURLE_OK) curlerr = curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &code);
     curl_slist_free_all(hdrs);
@@ -475,7 +480,7 @@ int snif_cert_download(snif_cert *cert) {
     struct snif_cert_buf *cbuf = malloc(sizeof(struct snif_cert_buf));
     if (!cbuf) return SNIF_CE_LIB;
     snif_cert_setapierr(cert, NULL, 0);
-    snif_cert_apiurl(cert, buf, ".crt");
+    int urlok = snif_cert_apiurl(cert, buf, sizeof(buf), ".crt");
     curl_easy_setopt(curl, CURLOPT_URL, buf);
     struct curl_slist *hdrs = curl_slist_append(NULL, "Accept: application/x-x509-ca-cert, application/pkix-cert");
     hdrs = curl_slist_append(hdrs, snif_cert_curlua(cert, buf));
@@ -490,7 +495,7 @@ int snif_cert_download(snif_cert *cert) {
     cbuf->len = 0;
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, &snif_cert_curldlfn);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, cbuf);
-    int curlerr = curl_easy_perform(curl);
+    int curlerr = urlok ? curl_easy_perform(curl) : CURLE_URL_MALFORMAT;
     long code;
     if (curlerr == CURLE_OK) curlerr = curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &code);
     curl_slist_free_all(hdrs);

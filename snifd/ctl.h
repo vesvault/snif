@@ -21,6 +21,9 @@
  **************************************************************************/
 
 
+#ifndef SNIF_CTL_H
+#define SNIF_CTL_H
+
 #define	SNIF_CTL_WBUFSIZE	8192
 #define	SNIF_CTL_RBUFSIZE	4096
 #define	SNIF_CTL_MAXTIME	0xffffffff
@@ -30,3 +33,5 @@
 struct snif_sock *snif_ctl(struct snif_sock *sock);
 #define	snif_ctl_alive(sock)	((sock)->ctl.alive)
 int snif_ctl_out(struct snif_sock *sock, const char *buf, int len);
+
+#endif

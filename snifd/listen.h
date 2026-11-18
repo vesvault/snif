@@ -21,6 +21,9 @@
  **************************************************************************/
 
 
+#ifndef SNIF_LISTEN_H
+#define SNIF_LISTEN_H
+
 struct snif_sock;
 
 typedef struct snif_listen {
@@ -57,3 +60,5 @@ int snif_listen_poll(struct snif_listen *lstn);
 int snif_listen_pushl(struct snif_listen *lstn, const char *ntfy, int len);
 #define	snif_listen_push(lstn, ntfy)	snif_listen_pushl(lstn, ntfy, -1)
 int snif_listen_shutdown(struct snif_listen *lstn);
+
+#endif

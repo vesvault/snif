@@ -51,8 +51,8 @@ void snif_watch_logopen(snif_sock *sock) {
     snif_log("watch=%d open cn=%s errno=%d", sock->fd, sock->watch.cert->cn, errno);
     if (sock->fd >= 0 && sock->listen->push) {
 	char buf[320];
-	sprintf(buf, "SNIF CTL %d %s\r\n", sock->fd, snif_cert_hostname(sock->watch.cert));
-	snif_listen_push(sock->listen, buf);
+	int l = snprintf(buf, sizeof(buf), "SNIF CTL %d %s\r\n", sock->fd, snif_cert_hostname(sock->watch.cert));
+	if (l > 0 && l < (int) sizeof(buf)) snif_listen_push(sock->listen, buf);
     }
 }
 

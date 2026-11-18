@@ -21,6 +21,9 @@
  **************************************************************************/
 
 
+#ifndef SNIF_CLN_H
+#define SNIF_CLN_H
+
 #define	SNIF_CLN_MAXHOST	255
 #define	SNIF_CLN_BUFSIZE	5120
 #define	SNIF_CLN_ABUSE		60
@@ -30,3 +33,5 @@ struct snif_sock **snif_cln_seek(const char *connid, int create);
 #define	snif_cln_get(connid)	snif_cln_seek(connid, 0)
 char *snif_cln_notify(struct snif_sock *sock, char *buf);
 int snif_cln_push(struct snif_sock *sock, const char *ntfy);
+
+#endif

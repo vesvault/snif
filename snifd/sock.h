@@ -21,6 +21,9 @@
  **************************************************************************/
 
 
+#ifndef SNIF_SOCK_H
+#define SNIF_SOCK_H
+
 #ifndef SNIF_SOCK_MAXBUF
 #define	SNIF_SOCK_MAXBUF	131072
 #endif
@@ -118,3 +121,5 @@ int snif_sock_chktmout(struct snif_sock *sock);
 int snif_sock_done(struct snif_sock *sock);
 void snif_sock_shutdown(struct snif_sock *sock);
 void snif_sock_free(struct snif_sock *sock);
+
+#endif

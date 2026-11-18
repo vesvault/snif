@@ -4,14 +4,39 @@ name: docker
 # To also publish to Docker Hub, add a docker/login-action step with
 # DOCKERHUB_USERNAME / DOCKERHUB_TOKEN secrets and list the second image
 # in the metadata step.
+#
+# SBOM: docker/image-sbom.js writes the published image's SBOM (CycloneDX
+# 1.6): every Alpine package in it, and snif itself, for all three
+# platforms, named by the image's index digest. After a release publishes,
+# the `sbom` job
+#
+#   - attaches snif-<version>-image.cdx.json to the GitHub release, opening a
+#     draft release if none exists yet: add the notes and the tarball to that
+#     draft, then publish it
+#   - attests it to the image digest (actions/attest), stored with GitHub and
+#     pushed to GHCR beside the image (as the tag sha256-<digest>):
+#       gh attestation verify oci://ghcr.io/vesvault/snif:<version> --owner vesvault \
+#         --predicate-type https://cyclonedx.org/bom
+#
+# The image's Alpine packages, OpenSSL and libcurl among them, stay as they
+# were built until the next release; the SBOM is how they are matched against
+# advisories after that. Run the workflow by hand with a version (Actions >
+# docker > Run workflow) to write and attach the SBOM for an image already
+# published. A manual run never builds or pushes an image.
 
 on:
   push:
     tags: [ 'v*' ]
   workflow_dispatch:
+    inputs:
+      version:
+        description: 'A published version (e.g. 1.15): write its image SBOM, attach it to the release, attest it.'
+        required: true
 
 jobs:
   publish:
+    # Version tags only: a manual run writes an SBOM and publishes nothing.
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -44,3 +69,92 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+
+  sbom:
+    name: SBOM of the published image
+    # After a release publishes, or by hand for a version already published.
+    # always(): on a manual run `publish` is skipped, and this still runs.
+    needs: publish
+    if: >-
+      always() &&
+      (needs.publish.result == 'success' ||
+       (github.event_name == 'workflow_dispatch' && inputs.version != ''))
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write           # attach the SBOM to the release
+      packages: write           # push the attestation to GHCR
+      id-token: write           # sign the attestation (Sigstore, through GitHub)
+      attestations: write
+      artifact-metadata: write
+    env:
+      IMAGE: ghcr.io/${{ github.repository }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      # The generator checks the image's revision label against the release
+      # tag and reads the Dockerfile at it, so it needs every tag.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Which release
+        id: rel
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then v=$INPUT_VERSION; else v=${GITHUB_REF_NAME#v}; fi
+          [[ $v =~ ^[0-9]+(\.[0-9]+)+$ ]] || { echo "::error::not a release version: '$v'"; exit 1; }
+          git rev-parse -q --verify "refs/tags/v$v" > /dev/null || { echo "::error::no tag v$v"; exit 1; }
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # The index digest is the SHA-256 of the registry's raw index, piped
+      # straight into the hash: a $(...) capture would drop a trailing newline.
+      # The generator reads the same bytes and stops if they hash otherwise.
+      - name: SBOM
+        id: sbom
+        env:
+          V: ${{ steps.rel.outputs.version }}
+        run: |
+          d=sha256:$(docker buildx imagetools inspect --raw "$IMAGE:$V" | sha256sum | cut -d' ' -f1)
+          [[ $d =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "::error::no digest for $IMAGE:$V"; exit 1; }
+          echo "digest=$d" >> "$GITHUB_OUTPUT"
+          node docker/image-sbom.js --digest "$d" "$IMAGE:$V" > "snif-$V-image.cdx.json"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: sbom-${{ steps.rel.outputs.version }}
+          path: snif-${{ steps.rel.outputs.version }}-image.cdx.json
+
+      # Uploaded again, same name, on every run: the SBOM is deterministic, so
+      # a re-run replaces it with the same bytes unless the image changed.
+      - name: Attach to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          V: ${{ steps.rel.outputs.version }}
+        run: |
+          f=snif-$V-image.cdx.json
+          if gh release view "v$V" > /dev/null 2>&1; then
+            gh release upload "v$V" "$f" --clobber
+          else
+            gh release create "v$V" --draft --verify-tag --title "v$V" --notes "" "$f"
+            echo "::notice::opened a draft release v$V with the image SBOM: add the notes and snif-$V.tar.gz, then publish it"
+          fi
+
+      - name: Attest the SBOM to the image
+        uses: actions/attest@v4
+        with:
+          subject-name: ${{ env.IMAGE }}
+          subject-digest: ${{ steps.sbom.outputs.digest }}
+          sbom-path: snif-${{ steps.rel.outputs.version }}-image.cdx.json
+          push-to-registry: true

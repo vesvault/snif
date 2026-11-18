@@ -20,6 +20,9 @@
  *
  **************************************************************************/
 
+#ifndef SNIF_HELP_H
+#define SNIF_HELP_H
+
 #ifdef PACKAGE_VERSION
 #define	SNIF_VERSION_STR	PACKAGE_VERSION
 #else
@@ -29,3 +32,5 @@
 extern const char *snif_banner;
 extern const char *snif_help;
 void snif_out_ansi(int fdi, const char *str);
+
+#endif

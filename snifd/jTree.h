@@ -29,6 +29,9 @@
  *
  ***************************************************************************/
 
+#ifndef JTREE_H
+#define JTREE_H
+
 typedef struct jTree {
     void *data;
     void *extra;
@@ -47,3 +50,5 @@ void **jTree_next(void **pdata);
 void **jTree_prev(void **pdata);
 void jTree_delete(struct jTree **ptree, void **pdata);
 unsigned char jTree_collapse(struct jTree **ptree);
+
+#endif

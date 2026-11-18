@@ -20,6 +20,9 @@
  *
  **************************************************************************/
 
+#ifndef SNIF_UTIL_H
+#define SNIF_UTIL_H
+
 #ifndef SNIF_LOG
 #define	SNIF_LOG	LOG_AUTH
 #endif
@@ -28,3 +31,5 @@ void snif_init();
 unsigned long snif_time();
 const char *snif_getdn(void *crt);
 #define	snif_log(...)		syslog(LOG_NOTICE, __VA_ARGS__)
+
+#endif

@@ -4,3 +4,4 @@ ca-proxy
 _tmp
 *.md
 Dockerfile
+docker/image-sbom.js
