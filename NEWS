@@ -1,5 +1,29 @@
 snif NEWS -- history of user-visible changes
 
+Version 1.17
+------------
+
+* ca-proxy: an approval by VES now checks VESapi's certificate name. The
+  CA proxy asks VESapi who created the vault item an approval names, and
+  approves on the answer. The connection checked that VESapi's
+  certificate chained to a trusted CA, but not that it was issued for
+  api.ves.host, so whoever could intercept it, with a certificate for
+  any name, could answer for any token: approve names past an account's
+  limit, under another account's email, or under a domain that takes
+  approval by VES only. The certificate must now carry the name. A
+  VESapi that cannot be reached, or is refused, approves nothing (403),
+  where it was a fatal error. test/ves-tls.t covers it.
+
+* snifdog: a rate limit no longer starts a base again from the
+  beginning. Any failed fetch was taken for a rejected cursor: the pass
+  fetched again at once from the start of the base's history and, when
+  that worked, read all of it again. Only an HTTP 4xx other than 408 and
+  429 is taken that way now; a rate limit, a timeout, a server error or
+  a failed connection ends the pass and keeps the cursor. A Retry-After
+  from CertSpotter delays the next pass in watch mode, up to an hour,
+  and the notice for a rejected cursor is no longer split over two log
+  lines. test/fetch-errors.t covers it.
+
 Version 1.16
 ------------
 

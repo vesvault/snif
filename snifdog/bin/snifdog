@@ -824,15 +824,21 @@ sub run_pass {
 	my $ok = eval { ($recs, $next, $more) = $src->fetch($cursor); 1 };
 	if (!$ok) {
 	    my $err = $@ || 'fetch failed';
+	    chomp $err;
+	    $C{retry_after} = $1 if $err =~ /\(retry after (\d+)s\)/;
 	    # A rejected/pruned cursor is not a correctness problem: restart from
 	    # the beginning and reconverge (the pin DB is a function of history).
-	    if (!$reset && $cursor ne '') {
+	    # Only an answer about the request itself can mean that. A rate
+	    # limit, a server error or a network failure says nothing about the
+	    # cursor, and starting over would read the base's whole history
+	    # again, the costliest thing to do when told to slow down:
+	    # those end the pass, and the cursor is kept.
+	    if (!$reset && $cursor ne '' && cursor_rejected($err)) {
 		say_log('NOTICE', "cursor rejected ($err); restarting from the beginning");
 		$cursor = '';
 		$reset = 1;
 		next;
 	    }
-	    chomp $err;
 	    say_log('ERROR', "fetch: $err");
 	    return 1;
 	}
@@ -846,6 +852,28 @@ sub run_pass {
     }
     say_log('INFO', "pass done: $seen cert(s) examined, $NewAlerts new alert(s)");
     return $NewAlerts ? 2 : 0;
+}
+
+# Whether a source's error can mean it rejected the cursor: an HTTP answer
+# in 4xx, but not 408 (a timeout) or 429 (a rate limit). An adapter's
+# message is "<source>: <status line>"; LWP reports a connection it could
+# not make as a 500.
+sub cursor_rejected {
+    my ($err) = @_;
+    return $err =~ /^[\w.]+:\s+4(?!08\b|29\b)\d\d\b/ ? 1 : 0;
+}
+
+# The pause before the next pass in watch mode: the poll interval, or the
+# wait the source asked for (Retry-After) if longer, up to an hour, well
+# inside the three hours after which a silent snifdog is reported.
+sub next_sleep {
+    my $ra = delete $C{retry_after};
+    my $s = $C{interval};
+    if (defined $ra && $ra > $s) {
+	$s = $ra > 3600 ? 3600 : $ra;
+	say_log('NOTICE', "the source asked to wait ${ra}s: next pass in ${s}s");
+    }
+    return $s;
 }
 
 sub load_source {
@@ -985,7 +1013,7 @@ sub main {
 	while (1) {
 	    $NewAlerts = 0;
 	    eval { run_pass(); 1 } or say_log('ERROR', "pass: $@");
-	    sleep $C{interval};
+	    sleep next_sleep();
 	}
     }
     elsif ($cmd eq 'help' || $cmd eq '-h' || $cmd eq '--help') { $rc = usage() }

@@ -177,7 +177,10 @@ sudo make install
 
 Review `/etc/snif/snif.conf` and adjust the port mapping and other variables if
 needed. The configuration defaults to the public SNIF relay operated by
-VESvault — see https://snif.host for the terms of use.
+VESvault — see https://snif.host for the terms of use. Its outages and
+planned maintenance are posted in
+[issue #4](https://github.com/vesvault/snif/issues/4): subscribe there to be
+notified.
 
 ```sh
 # First run prints an authorization link — open it to authorize cert issuance

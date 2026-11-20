@@ -24,6 +24,13 @@
 $VESauthDir = $_SERVER['DOCUMENT_ROOT'] . '/../auth/ves';
 $VESetcDir = $_SERVER['DOCUMENT_ROOT'] . '/../etc';
 
+# VESapi, which answers who approved: the name its certificate must carry,
+# and where to connect. A test points $VESapiAddr at a stand-in and gives
+# its CA in $VESapiCAFile; the system's trusted CAs otherwise.
+$VESapiHost = 'api.ves.host';
+$VESapiAddr = 'api.ves.host:443';
+$VESapiCAFile = NULL;
+
 # The approval limit of an account, from etc/<email>.ves-limit, else
 # etc/ves-limit, else 10 refilling one a day: the limit and the time one
 # approval takes to refill, e.g. "10 1d" (s, m, h or d; a bare number is
@@ -52,10 +59,23 @@ function snif_auth_ves_times($f) {
     return $ts;
 }
 
+# A request to VESapi; its result, or NULL. The server's certificate must
+# chain to a trusted CA and carry $VESapiHost: the answer decides an
+# approval, so a certificate for any other name is refused (until 1.17
+# the name went unchecked). A server that cannot be reached, or is
+# refused, is NULL with api_req_status 0.
 function ves_api_req($meth, $uri, $hdrs, $data=NULL) {
-    $ctx = stream_context_create(['ssl' => ['verify_peer_name' => false]]);
-    $fd = stream_socket_client('ssl://api.ves.host:443', $errno, $errstr, 50, STREAM_CLIENT_CONNECT, $ctx);
-    $req = ["$meth /v1/$uri HTTP/1.0", "Host: api.ves.host"];
+    $host = $GLOBALS['VESapiHost'];
+    $ssl = ['verify_peer' => true, 'verify_peer_name' => true, 'peer_name' => $host];
+    if (!empty($GLOBALS['VESapiCAFile'])) $ssl['cafile'] = $GLOBALS['VESapiCAFile'];
+    $ctx = stream_context_create(['ssl' => $ssl]);
+    $fd = @stream_socket_client('ssl://' . $GLOBALS['VESapiAddr'], $errno, $errstr, 50, STREAM_CLIENT_CONNECT, $ctx);
+    if (!$fd) {
+	error_log("snif-auth-ves: no VESapi connection ($errno): $errstr");
+	$GLOBALS['api_req_status'] = 0;
+	return NULL;
+    }
+    $req = ["$meth /v1/$uri HTTP/1.0", "Host: $host"];
     if ($hdrs) foreach ($hdrs AS $hdr) $req[] = $hdr;
     if ($data) {
         switch (gettype($data)) {
@@ -118,7 +138,7 @@ function snif_auth_ves() {
     $hp = explode('.', $_SERVER['HTTP_X_VES_AUTHORIZATION']);
     if ($hp[0] == 'vaultItem') {
 	$rs = ves_api_req('GET', 'vaultItems/' . $hp[1] . '?fields=file(creator(email))', ['Authorization: Bearer ' . $hp[2]]);
-	$e = str_replace('/', '', $rs->file->creator->email);
+	$e = isset($rs->file->creator->email) ? str_replace('/', '', $rs->file->creator->email) : '';
 	if ($e && snif_auth_ves_count($e)) {
 	    if (snif_cluster_node()) snif_cluster_enqueue("auth/ves/" . snif_cluster_node() . "/$e");
 	    return $e;

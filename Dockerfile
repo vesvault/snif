@@ -30,7 +30,12 @@ WORKDIR /src
 RUN ./configure --disable-shared && make && strip snifd/snifd
 
 FROM alpine:3.22
-RUN apk add --no-cache libssl3 libcrypto3 libcurl ca-certificates su-exec \
+# apk upgrade first: apk add leaves the packages the base image already has
+# (libssl3, libcrypto3, zlib, musl) at the base image's versions, and the base
+# image is rebuilt only now and then. Without it, a release built after an
+# Alpine fix could still carry the bug.
+RUN apk upgrade --no-cache \
+    && apk add --no-cache libssl3 libcrypto3 libcurl ca-certificates su-exec \
     && adduser -D -H -u 909 snif
 COPY --from=build /src/COPYING /src/NOTICE /usr/share/licenses/snif/
 COPY --from=build /src/snifd/snifd /usr/bin/snifd

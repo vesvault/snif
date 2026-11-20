@@ -80,7 +80,12 @@ sub fetch {
     my $req = HTTP::Request->new(GET => $url);
     $req->header(Authorization => 'Bearer ' . $self->{token}) if $self->{token};
     my $rsp = $self->{ua}->request($req);
-    die "certspotter: " . $rsp->status_line . "\n" unless $rsp->is_success;
+    if (!$rsp->is_success) {
+	# A rate limit or an outage may say when to come back; the message
+	# carries it, and snifdog waits at least that long before its next pass.
+	my $ra = _retry_after($rsp->header('Retry-After'));
+	die "certspotter: " . $rsp->status_line . (defined $ra ? " (retry after ${ra}s)" : '') . "\n";
+    }
     my $arr = eval { decode_json($rsp->decoded_content) };
     die "certspotter: bad JSON response\n" unless ref $arr eq 'ARRAY';
     my @recs;
@@ -102,6 +107,19 @@ sub fetch {
     my $next = @recs ? $recs[-1]{id} : $cursor;
     my $more = @recs ? 1 : 0;
     return (\@recs, $next, $more);
+}
+
+# A Retry-After header in seconds from now: a number of seconds, or an HTTP
+# date; undef if absent or unreadable.
+sub _retry_after {
+    my ($v) = @_;
+    return undef unless defined $v;
+    return $1 + 0 if $v =~ /^\s*(\d+)\s*$/;
+    require HTTP::Date;
+    my $t = HTTP::Date::str2time($v);
+    return undef unless defined $t;
+    my $s = int($t - time + 0.5);
+    return $s > 0 ? $s : 0;
 }
 
 sub _issuer {
