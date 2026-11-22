@@ -336,8 +336,8 @@ Rules per class:
   line per approval with its time, and the reader replays every node's
   approvals in time order through the account's leaky bucket.
 - **local:** never leaves the node.
-  - `arc/` is produced on every node by `snif-arc` from the `crt/`
-    modification times, which the sync preserves.
+  - `arc/` is produced on every node by `snif-arc` from the certificates in
+    `crt/`, which the sync carries with their modification times.
   - `log/<cn>.log` holds `snif-certd`'s one-hour retry throttle, which is
     per node on purpose.
 
@@ -366,7 +366,8 @@ that node's `snif-apnsd` stores it (section 2.2). The wake is sent from the
 node a client reaches, which may be any other.
 
 Synced files keep their modification time. `snif-certd`'s one-day reissue
-throttle and `snif-arc`'s 75-day archive both read it.
+throttle reads it, and `snif-arc` reads it to skip a certificate too new to
+be due for archiving.
 
 **`etc/`** is configuration and secrets, and the sync never carries it:
 

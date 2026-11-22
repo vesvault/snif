@@ -1,4 +1,4 @@
-# snif-arc -- archive the SNIF certificates older than 75 days, so that
+# snif-arc -- archive each SNIF certificate 14 days before it expires, so that
 # snif-certd issues a fresh one the next time the connector asks, and apply
 # the retention periods set in snif.conf (ca-proxy/README). It runs on every
 # relay node; a run with nothing to do changes nothing. For a host without

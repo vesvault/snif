@@ -1,0 +1,67 @@
+#!/usr/bin/perl
+#
+# dist-tar <mtime> <dir>: a POSIX ustar archive of <dir> on stdout, with
+# every byte decided here, for make dist-reproducible (Makefile.am). GNU tar
+# would do, given the same flags, but its headers differ by version (1.35
+# leaves a regular file's device numbers blank, 1.34 writes zeros), and the
+# tarball must come out the same on any host that rebuilds it.
+#
+# Each entry: the directory before what it holds, names sorted by byte;
+# owner and group 0 with no names; mode 0755 for a directory or a file with
+# any execute bit, 0644 otherwise; every time <mtime> (seconds since the
+# epoch). Symbolic links are followed. Anything but a file or a directory
+# stops it, as does a name too long for ustar.
+
+use strict;
+use warnings;
+
+my ($mtime, $top) = @ARGV;
+die "usage: dist-tar <mtime> <dir>\n" if !defined $top || $mtime !~ /^[0-9]+$/ || $top =~ m{^/|(^|/)\.\.(/|$)};
+$top =~ s{/+$}{};
+die "dist-tar: $top: not a directory\n" if !-d $top;
+binmode STDOUT;
+
+sub header {
+    my ($path, $mode, $size, $type) = @_;
+    my ($prefix, $name) = ('', $path);
+    if (length $path > 100) {
+	# Split at the last "/" that leaves the prefix at most 155 bytes, other
+	# than a directory's own trailing one: the name is then as short as it
+	# can be, and must be at most 100.
+	my $lim = length($path) - 2;
+	$lim = 155 if $lim > 155;
+	my $at = rindex($path, '/', $lim);
+	die "dist-tar: $path: too long for ustar\n" if $at <= 0 || length($path) - $at - 1 > 100;
+	($prefix, $name) = (substr($path, 0, $at), substr($path, $at + 1));
+    }
+    my $h = pack('a100 a8 a8 a8 a12 a12 a8 a1 a100 a6 a2 a32 a32 a8 a8 a155 a12',
+	$name, sprintf('%07o', $mode), '0000000', '0000000', sprintf('%011o', $size),
+	sprintf('%011o', $mtime), ' ' x 8, $type, '', 'ustar', '00', '', '', '', '', $prefix, '');
+    substr($h, 148, 8) = sprintf("%06o\0 ", unpack('%32C*', $h));
+    return $h;
+}
+
+sub put {
+    my ($path) = @_;
+    if (-d $path) {
+	print header("$path/", 0755, 0, '5');
+	opendir(my $d, $path) || die "dist-tar: $path: $!\n";
+	my @names = sort grep { $_ ne '.' && $_ ne '..' } readdir $d;
+	closedir $d;
+	put("$path/$_") for @names;
+    } elsif (-f $path) {
+	my $size = -s _;
+	my $mode = ((stat _)[2] & 0111) ? 0755 : 0644;
+	open(my $f, '<:raw', $path) || die "dist-tar: $path: $!\n";
+	my $data = do { local $/; <$f> } // '';
+	close $f;
+	die "dist-tar: $path: read " . length($data) . " of $size bytes\n" if length $data != $size;
+	print header($path, $mode, $size, '0'), $data, "\0" x ((512 - $size % 512) % 512);
+    } else {
+	die "dist-tar: $path: not a file or a directory\n";
+    }
+}
+
+put($top);
+print "\0" x 1024;
+close(STDOUT) || die "dist-tar: write: $!\n";

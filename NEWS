@@ -1,5 +1,40 @@
 snif NEWS -- history of user-visible changes
 
+Version 1.19
+------------
+
+* ca-proxy: snif-arc archives a certificate by its own expiry, once less
+  than 14 days of it are left, where it archived every certificate whose
+  file was 75 days old. The connector asks for a new certificate 7 days
+  before its own expires, and is given the one in crt/ while it is there.
+  That worked for 90-day certificates. From 2027-02-10 Let's Encrypt
+  issues 64-day ones by default: the connector would be given back the
+  certificate it holds, refuse it, stop serving a day before it expires,
+  and be renewed only when the file reached 75 days, about 12 days later
+  in every cycle. Now any validity of 28 days or more renews in time:
+  90-day certificates are archived at about 76 days, 64-day ones at
+  about 50, 45-day ones at about 31. Only files at least 14 days old are
+  read, with openssl, which snif-arc now needs. A file in crt/ that is no
+  certificate openssl can read is archived, and the run fails.
+
+* ca-proxy: snif-arc reports, one line each on stderr, every name whose
+  newest certificate is archived and has less than 5 days left with no
+  newer one: "snif-arc: {name}: not renewed, its certificate expires
+  {time}". Its summary line counts them, as "not renewed N", when there
+  are any. README, "snif-arc"; test/arc.t covers both.
+
+* The release tarball is reproducible and attested. make
+  dist-reproducible packs the files make dist does with every time set
+  to the release commit's (SOURCE_DATE_EPOCH), entries sorted, owner 0
+  and gzip storing no name or time. build-aux/dist-tar writes the
+  archive, since GNU tar's headers differ between versions; it needs
+  Perl and GNU gzip. aclocal.m4 is now in git, so every file it packs
+  comes from the tag. The new release workflow builds the
+  tarball on each version tag, attests its provenance, and attaches it
+  to the GitHub release; the same command from a clean checkout of the
+  tag gives the same sha256 (README, "Verify a release"). A CI job
+  checks that two copies of the tree give the same bytes.
+
 Version 1.18
 ------------
 

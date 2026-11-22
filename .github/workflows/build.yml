@@ -60,3 +60,29 @@ jobs:
       # localhost) once a test harness lands, then promote this to `make check`.
       - name: Smoke
         run: ./snifd -h || true
+
+  # The release tarball (release.yml) must come out the same from any copy of
+  # the tree: here from the checkout, and from a second copy with other file
+  # times and modes and SOURCE_DATE_EPOCH in place of git. Configured as
+  # committed, as the release is, without autoreconf.
+  reproducible:
+    name: reproducible tarball
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Two builds, two copies
+        run: |
+          ./configure > /dev/null
+          make dist-reproducible
+          sde=$(git log -1 --format=%ct)
+          mkdir ../second
+          git archive HEAD | (cd ../second && umask 0002 && tar -xmf -)
+          cd ../second
+          umask 0002
+          SOURCE_DATE_EPOCH=$sde ./configure > /dev/null
+          SOURCE_DATE_EPOCH=$sde make dist-reproducible
+          cmp "$GITHUB_WORKSPACE"/snif-*.tar.gz snif-*.tar.gz

@@ -19,8 +19,8 @@ name: docker
 # the `sbom` job
 #
 #   - attaches snif-<version>-image.cdx.json to the GitHub release, opening a
-#     draft release if none exists yet: add the notes and the tarball to that
-#     draft, then publish it
+#     draft release if none exists yet (release.yml usually has, with the
+#     tarball): add the notes to that draft, then publish it
 #   - attests it to the image digest (actions/attest), stored with GitHub and
 #     pushed to GHCR beside the image (as the tag sha256-<digest>):
 #       gh attestation verify oci://ghcr.io/vesvault/snif:<version> --owner vesvault \
@@ -167,7 +167,7 @@ jobs:
             gh release upload "v$V" "$f" --clobber
           else
             gh release create "v$V" --draft --verify-tag --title "v$V" --notes "" "$f"
-            echo "::notice::opened a draft release v$V with the image SBOM: add the notes and snif-$V.tar.gz, then publish it"
+            echo "::notice::opened a draft release v$V with the image SBOM: add the notes, then publish it (release.yml attaches snif-$V.tar.gz)"
           fi
 
       - name: Attest the SBOM to the image

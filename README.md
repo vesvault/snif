@@ -304,9 +304,21 @@ snifdog/    CA Transparency watchdog — standalone sub-package
 
 ## Verify a release
 
-- **The source** is the release's tag in this repository; the tarball on the
-  GitHub release is made from it with `make dist`, and the Homebrew formula
-  (`vesvault/homebrew-ves`) pins the tarball by its sha256.
+- **The source** is the release's tag in this repository. From 1.19 on, the
+  tarball on the GitHub release is built from the tag by this repository's
+  `release` workflow, which attests its provenance, and rebuilds byte for
+  byte from the tag with Perl and GNU gzip:
+
+  ```sh
+  gh attestation verify snif-<version>.tar.gz --repo vesvault/snif
+  git clone --branch v<version> https://github.com/vesvault/snif && cd snif
+  ./configure && make dist-reproducible   # prints the sha256; no autoreconf
+  ```
+
+  The sha256 must be the release tarball's. VESvault rebuilds it the same
+  way on its own host before the Homebrew formula (`vesvault/homebrew-ves`)
+  is pinned to it. Tarballs before 1.19 were made by hand and do not
+  rebuild.
 - **The container image**, from 1.18 on, carries a signed provenance
   attestation: GitHub's record that this repository's `docker` workflow,
   run on the tag's commit, built that digest. With the GitHub CLI:

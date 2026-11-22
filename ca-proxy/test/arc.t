@@ -51,6 +51,11 @@ sub cert {
 }
 my $Short = cert(1);	# expired 399 days before $Now
 my $Long = cert(200);	# expired 200 days before $Now
+my $Cur = cert(460);	# 60 days left at $Now
+my $Left20 = cert(420);	# 20 days left
+my $Left10 = cert(410);	# 10 days left
+my $Left8 = cert(408);	# 8 days left
+my $Left3 = cert(403);	# 3 days left
 
 sub run {
     my ($base, %set) = @_;
@@ -77,15 +82,31 @@ spew("$B/arc/$A/dev-gone.x.test.crt", $Short, 450 * $D);
 spew("$B/auth/dev-down.x.test.auth", 'user@example.com', 500 * $D);
 spew("$B/arc/$A/dev-down.x.test.crt", $Long, 450 * $D);
 spew("$B/auth/dev-live.x.test.auth", '1', 500 * $D);
-spew("$B/crt/dev-live.x.test.crt", $Long, 10 * $D);
+spew("$B/crt/dev-live.x.test.crt", $Cur, 10 * $D);
 spew("$B/auth/dev-noissue-old.x.test.auth", '1', 400 * $D);
 spew("$B/cfg/dev-noissue-old.x.test.cfg", "", 400 * $D);
 spew("$B/auth/dev-noissue-new.x.test.auth", '1', 100 * $D);
-# Archiving: a certificate over 75 days old moves; a root bundle stays.
+# Archiving, by the certificate's expiry: one with less than 14 days left
+# moves, however young its file (a 64-day certificate, 54 days on); one with
+# more stays, however old (a 100-day one, 80 days on); a file under 14 days
+# old is not read; a root bundle stays.
 spew("$B/auth/dev-arch.x.test.auth", '1', 300 * $D);
-spew("$B/crt/dev-arch.x.test.crt", $Long, 80 * $D);
+spew("$B/crt/dev-arch.x.test.crt", $Left10, 54 * $D);
+spew("$B/auth/dev-keep.x.test.auth", '1', 300 * $D);
+spew("$B/crt/dev-keep.x.test.crt", $Left20, 80 * $D);
+spew("$B/auth/dev-young.x.test.auth", '1', 300 * $D);
+spew("$B/crt/dev-young.x.test.crt", $Long, 5 * $D);
 spew("$B/crt/mesh.x.test.crt", $Long, 200 * $D);
 spew("$B/etc/mesh.x.test.pub-ca", "ca");
+# Not renewed: an archived certificate with less than 5 days left and none
+# newer in crt/ is reported; one renewed, or with more left, is not.
+spew("$B/auth/due-soon.x.test.auth", '1', 300 * $D);
+spew("$B/arc/$R/due-soon.x.test.crt", $Left3, 61 * $D);
+spew("$B/auth/due-renewed.x.test.auth", '1', 300 * $D);
+spew("$B/arc/$R/due-renewed.x.test.crt", $Left3, 61 * $D);
+spew("$B/crt/due-renewed.x.test.crt", $Cur, 4 * $D);
+spew("$B/auth/due-later.x.test.auth", '1', 300 * $D);
+spew("$B/arc/$R/due-later.x.test.crt", $Left8, 56 * $D);
 # Names never approved (SNIF_ARC_UNAPPROVED_DAYS=30).
 spew("$B/cfg/un-old.x.test.cfg", "purpose=test\n", 31 * $D);
 spew("$B/csr/un-old.x.test.csr", "csr", 31 * $D);
@@ -128,10 +149,12 @@ my $before_user = mtime("$B/auth/ves/n1/user\@example.com");
 my $before_same = mtime("$B/auth/ves/n1/same\@example.com");
 my ($rc, $out) = run($B, SNIF_ARC_DEVICE_DAYS => 365, SNIF_ARC_UNAPPROVED_DAYS => 30,
     SNIF_ARC_OLD_DAYS => 90, SNIF_ARC_AUTH_DAYS => 30);
-chomp $out;
+my @out = split /\n/, $out;
+my $Due = qr/^snif-arc: due-soon\.x\.test: not renewed, its certificate expires \d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$/;
 check($rc == 0, "a run with every period set exits 0 ($rc)");
-check($out eq "snif-arc: archived 1, devices removed 2, unapproved names removed 1, older archived copies removed 3, approvals cleared 2, counter files trimmed 7",
+check(@out == 2 && $out[1] eq "snif-arc: archived 1, not renewed 1, devices removed 2, unapproved names removed 1, older archived copies removed 3, approvals cleared 2, counter files trimmed 7",
     "and reports what it did: $out");
+check(@out == 2 && $out[0] =~ $Due, "a name whose certificate has 3 days left, and no newer one, is reported: $out[0]");
 
 check(!grep({ -e "$B/$_" } qw(cfg/dev-gone.x.test.cfg auth/dev-gone.x.test.auth csr/dev-gone.x.test.csr log/dev-gone.x.test.log), "arc/$A/dev-gone.x.test.crt"),
     "a device whose newest certificate expired over a year ago: every file removed");
@@ -142,7 +165,9 @@ check(!-e "$B/auth/dev-noissue-old.x.test.auth" && !-e "$B/cfg/dev-noissue-old.x
 check(-e "$B/auth/dev-noissue-new.x.test.auth", "approved 100 days ago and never issued: kept");
 my $Today = day($Now);
 check(!-e "$B/crt/dev-arch.x.test.crt" && -e "$B/arc/$Today/dev-arch.x.test.crt" && -e "$B/auth/dev-arch.x.test.auth",
-    "a certificate 80 days old is archived, and its device kept");
+    "a certificate with 10 days left, its file 54 days old, is archived, and its device kept");
+check(-e "$B/crt/dev-keep.x.test.crt", "one with 20 days left, its file 80 days old, stays");
+check(-e "$B/crt/dev-young.x.test.crt", "a file 5 days old is not read, and stays");
 check(-e "$B/crt/mesh.x.test.crt", "a local CA's root bundle stays in crt/");
 
 check(!-e "$B/cfg/un-old.x.test.cfg" && !-e "$B/csr/un-old.x.test.csr", "a name never approved, 31 days old: removed");
@@ -175,9 +200,10 @@ check(-e "$B/auth/captcha/n1/notes", "and a file with no counter's name is left,
 
 ($rc, $out) = run($B, SNIF_ARC_DEVICE_DAYS => 365, SNIF_ARC_UNAPPROVED_DAYS => 30,
     SNIF_ARC_OLD_DAYS => 90, SNIF_ARC_AUTH_DAYS => 30);
-chomp $out;
-check($rc == 0 && $out eq "snif-arc: archived 0, devices removed 0, unapproved names removed 0, older archived copies removed 0, approvals cleared 0, counter files trimmed 0",
-    "a second run finds nothing more: $out");
+@out = split /\n/, $out;
+check($rc == 0 && @out == 2 && $out[0] =~ $Due
+    && $out[1] eq "snif-arc: archived 0, not renewed 1, devices removed 0, unapproved names removed 0, older archived copies removed 0, approvals cleared 0, counter files trimmed 0",
+    "a second run finds nothing more, and reports the name not renewed again: $out");
 
 # ---- the same kind of tree with no period set ----------------------------------
 my $C = "$T/plain";
@@ -197,6 +223,18 @@ check(!grep({ !-e "$C/$_" } qw(cfg/un-old.x.test.cfg auth/dev-gone.x.test.auth a
 ($rc, $out) = run($C, SNIF_ARC_AUTH_DAYS => 'thirty');
 check($rc == 0 && $out =~ /SNIF_ARC_AUTH_DAYS='thirty' is not a number of days, ignored/ && (slurp("$C/auth/dev-gone.x.test.auth") // '') eq 'user@example.com',
     "a period that is not a number is reported and ignored");
+
+# ---- a file in crt/ that is not a certificate ------------------------------------
+my $F = "$T/bad";
+make_path(map { "$F/$_" } qw(cfg csr auth crt log arc etc var));
+spew("$F/crt/garbled.x.test.crt", "not a certificate\n", 20 * $D);
+spew("$F/crt/new-garbled.x.test.crt", "not a certificate\n", 5 * $D);
+($rc, $out) = run($F);
+@out = split /\n/, $out;
+check($rc == 1 && @out == 2 && $out[0] eq "snif-arc: crt/garbled.x.test.crt: no expiry openssl can read, archived"
+    && $out[1] eq "snif-arc: archived 1, FAILED 1", "a file with no expiry openssl can read is archived, reported, and the run fails: $out");
+check(!-e "$F/crt/garbled.x.test.crt" && -e "$F/arc/$Today/garbled.x.test.crt" && -e "$F/crt/new-garbled.x.test.crt",
+    "it is moved to arc/; one under 14 days old is not read");
 
 print "\n$pass passed, $fail failed\n";
 exit($fail ? 1 : 0);

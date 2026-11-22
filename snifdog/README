@@ -47,9 +47,9 @@ HOW IT WORKS -- pin the SPKI, not the fingerprint
 
 SNIF binds one key to one name for life: a device never re-keys; a new key gets
 a new snif-xxxx name (the cert path reuses the stored CSR on every renewal). So
-a name's SubjectPublicKeyInfo (SPKI) is immutable -- across the ~75-day renewal
-cycle only the serial and validity window change. snifdog therefore pins the
-SHA-256 of the DER SPKI (the RFC 7469 construction):
+a name's SubjectPublicKeyInfo (SPKI) is immutable -- across renewals only the
+serial and validity window change. snifdog therefore pins the SHA-256 of the
+DER SPKI (the RFC 7469 construction):
 
   - a legitimate renewal (same key, new serial)         -> silent, no alarm
   - a key-substitution impersonation (same name, new key) -> fires immediately

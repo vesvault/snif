@@ -25,10 +25,12 @@
 # snif-arc: the CA proxy's daily housekeeping, run on every relay node
 # (README, "snif-arc").
 #
-# It archives the certificates older than 75 days, moving them from crt/ to
-# arc/<date>/, so that snif-certd issues a fresh one the next time the
-# connector asks. Then, for each of these set to a number of days in
-# snif.conf, it applies that retention period; unset, it keeps everything:
+# It archives each certificate with less than 14 days left before it expires,
+# moving it from crt/ to arc/<date>/, so that snif-certd issues a fresh one
+# when the connector asks, 7 days before expiry. It reports each name whose
+# newest certificate has less than 5 days left and no new one. Then, for each
+# of these set to a number of days in snif.conf, it applies that retention
+# period; unset, it keeps everything:
 #
 #   SNIF_ARC_DEVICE_DAYS      an approved name whose newest certificate
 #                             expired this many days ago: all its files
@@ -60,6 +62,10 @@ fi
 BaseDir=$SNIF_CA_PROXY
 if [ -z "$BaseDir" ] || [ ! -d "$BaseDir/crt" ]; then
     echo "snif-arc: no CA proxy tree at '$BaseDir' (SNIF_CA_PROXY)" >&2
+    exit 1
+fi
+if ! command -v openssl > /dev/null; then
+    echo "snif-arc: no openssl, which reads each certificate's expiry" >&2
     exit 1
 fi
 CertDir="$BaseDir/crt"
@@ -113,19 +119,68 @@ rewrite() {
     Failed=$((Failed + 1))
     return 1
 }
+# The expiry (notAfter) of a file's first certificate, in seconds since the
+# epoch; fails if openssl cannot read one.
+not_after() {
+    local end
+    end=$(openssl x509 -noout -enddate -in "$1" 2> /dev/null) || return 1
+    date -d "${end#notAfter=}" +%s 2> /dev/null
+}
 
 # ---- archive ---------------------------------------------------------------
 
+# A certificate is archived once less than $RenewDays of it are left. The
+# connector asks for a new one 7 days before its own expires, and refuses one
+# already inside those 7 days (SNIF_CERT_REFRESH, lib/cert.h), so the file
+# must be gone by then; the other 7 days are for runs missed. Only a file at
+# least $RenewDays old is read: a certificate valid for twice that or more is
+# not due before.
+#
 # crt/<d>.crt of a local-CA base domain (etc/<d>.pub-ca) is the root bundle
-# published at /snif-cert/<d>.crt, not an issued certificate: it stays.
+# published at /snif-cert/<d>.crt, not an issued certificate: it stays. A file
+# whose expiry openssl cannot read serves no connector: it is archived, and
+# the run reports it and fails.
+RenewDays=14
 Archived=0
 ArcDay="$ArcDir/$(date -u -d @$Now +%Y%m%d)"
 while read -r t f; do
-    [ "${t%.*}" -lt $((Now - 75 * Day)) ] || continue
+    [ "${t%.*}" -lt $((Now - RenewDays * Day)) ] || continue
     [ -e "$BaseDir/etc/${f%.crt}.pub-ca" ] && continue
+    if end=$(not_after "$CertDir/$f"); then
+	[ "$end" -lt $((Now + RenewDays * Day)) ] || continue
+    else
+	echo "snif-arc: crt/$f: no expiry openssl can read, archived" >&2
+	Failed=$((Failed + 1))
+    fi
     mkdir -p -m 0775 "$ArcDay" 2> /dev/null
     if mv -- "$CertDir/$f" "$ArcDay/"; then Archived=$((Archived + 1)); else Failed=$((Failed + 1)); fi
 done < <(mtimes "$CertDir" '*.crt')
+
+# ---- certificates not renewed ------------------------------------------------
+
+# One line, on stderr, for each name whose newest certificate is archived,
+# has less than $WarnDays left, and has none newer in crt/. A running
+# connector asked for one 7 days before expiry, so either its device is off
+# or gone, or it was issued nothing (snif-certd's log says why); it stops
+# using the certificate a day before expiry. A certificate is archived with
+# less than $RenewDays left, so only that many days' folders, and one more,
+# are read.
+WarnDays=5
+Unrenewed=0
+declare -A Seen
+for ((i = 0; i <= RenewDays + 1; i++)); do
+    for c in "$ArcDir/$(date -u -d @$((Now - i * Day)) +%Y%m%d)"/*.crt; do
+	[ -f "$c" ] || continue
+	n=${c##*/}; n=${n%.crt}
+	[ -n "${Seen[$n]}" ] && continue
+	Seen[$n]=1
+	[ -e "$CertDir/$n.crt" ] && continue
+	end=$(not_after "$c") || continue
+	[ "$end" -gt $Now ] && [ "$end" -lt $((Now + WarnDays * Day)) ] || continue
+	echo "snif-arc: $n: not renewed, its certificate expires $(date -u -d @$end +%Y-%m-%dT%H:%M:%SZ)" >&2
+	Unrenewed=$((Unrenewed + 1))
+    done
+done
 
 # The newest archived copy of each name: Newest[name]="<seconds> <day>/<name>.crt",
 # relative to arc/.
@@ -153,13 +208,12 @@ if [ -n "$DeviceDays" ]; then
     index_arc
     while read -r t f; do
 	n=${f%.auth}
-	[ -e "$CertDir/$n.crt" ] && continue		# renewed in the last 75 days
+	[ -e "$CertDir/$n.crt" ] && continue		# a current certificate
 	if [ -n "${Newest[$n]}" ]; then
 	    # A certificate expires after it is issued, so one issued since the
 	    # cut has not expired before it.
 	    [ "${Newest[$n]%% *}" -lt $cut ] || continue
-	    end=$(openssl x509 -noout -enddate -in "$ArcDir/${Newest[$n]#* }" 2> /dev/null) || continue
-	    end=$(date -d "${end#notAfter=}" +%s 2> /dev/null) || continue
+	    end=$(not_after "$ArcDir/${Newest[$n]#* }") || continue
 	    [ "$end" -lt $cut ] || continue
 	else
 	    # Approved but never issued: from the approval.
@@ -266,6 +320,7 @@ if [ -n "$AuthDays" ]; then
 fi
 
 msg="snif-arc: archived $Archived"
+[ $Unrenewed -gt 0 ] && msg="$msg, not renewed $Unrenewed"
 [ -n "$DeviceDays" ] && msg="$msg, devices removed $Devices"
 [ -n "$UnapprovedDays" ] && msg="$msg, unapproved names removed $Unapproved"
 [ -n "$OldDays" ] && msg="$msg, older archived copies removed $OldCopies"

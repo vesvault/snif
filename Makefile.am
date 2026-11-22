@@ -45,8 +45,30 @@ snifd_snifd_SOURCES = $(SNIFD_CFILES) $(SNIFD_HFILES)
 
 dist_man_MANS = snifd/snifd.8 bin/snif-conn.1
 
-# Files consumed by install-data-hook must ship in the dist tarball.
-EXTRA_DIST = etc/snif.conf etc/systemd/snif-conn.service
+# Files consumed by install-data-hook must ship in the dist tarball, and
+# build-aux/dist-tar is what packs the release tarball.
+EXTRA_DIST = etc/snif.conf etc/systemd/snif-conn.service build-aux/dist-tar
+
+# The release tarball, which anyone can rebuild byte for byte from the
+# release tag (README.md, "Verify a release"): the files make dist packs,
+# archived by build-aux/dist-tar with every time set to SOURCE_DATE_EPOCH
+# (by default the checked-out commit's, read from git), entries sorted,
+# owner 0 and fixed modes, then gzip storing no name or time. Every file it
+# packs is in git, aclocal.m4 included, so nothing depends on the autotools
+# at hand; run it after ./configure, without autoreconf. Needs Perl and GNU
+# gzip.
+dist-reproducible: distdir
+	@sde="$${SOURCE_DATE_EPOCH:-`cd $(srcdir) && git log -1 --format=%ct 2>/dev/null`}"; \
+	case "$$sde" in ''|*[!0-9]*) \
+	    echo "dist-reproducible: no commit time in git here; set SOURCE_DATE_EPOCH" >&2; exit 1 ;; \
+	esac; \
+	rm -f $(distdir).tar $(distdir).tar.gz && \
+	$${PERL-perl} $(srcdir)/build-aux/dist-tar "$$sde" $(distdir) > $(distdir).tar && \
+	GZIP= gzip -9 -n $(distdir).tar
+	$(am__post_remove_distdir)
+	@sha256sum $(distdir).tar.gz 2>/dev/null || shasum -a 256 $(distdir).tar.gz
+
+.PHONY: dist-reproducible
 
 snifd_etcdir = /etc/snif
 systemdunitdir = /lib/systemd/system

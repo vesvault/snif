@@ -37,11 +37,11 @@ or application-layer attacks — those are out of scope per `security-model.md`.
 SNIF **binds one key to one name for life** — a device never re-keys; a new key
 gets a new `snif-xxxx` name. The certificate issuance path reuses the device's
 stored CSR on every renewal (`ca-proxy/bin/snif-certd` loads `csr/<domain>.csr`;
-`ca-proxy/bin/snif-arc` retires certs older than 75 days so `snif-certd`
-reissues). Consequence:
+`ca-proxy/bin/snif-arc` retires a cert 14 days before it expires so
+`snif-certd` reissues). Consequence:
 
-> A name's **SubjectPublicKeyInfo (SPKI) is immutable.** Across the ~75-day
-> renewal cycle only the serial and validity window change, and there is no
+> A name's **SubjectPublicKeyInfo (SPKI) is immutable.** Across renewals
+> only the serial and validity window change, and there is no
 > legitimate re-key that could ever change it. So **any** conflicting SPKI for a
 > name is, unambiguously, a mis-issuance — the watcher has no rotation
 > false-positive class to reason around.

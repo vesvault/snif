@@ -43,8 +43,8 @@ $Live = 1;
 $UserAgent = "snif-certd/0.96 (https://snif.host)";
 
 # Local CA issuance: the openssl command line tool, and the validity of the
-# certificates it signs - the same as Let's Encrypt, so snif-arc and connector
-# renewal work the same way for both.
+# certificates it signs. snif-arc and the connector renew a certificate by its
+# own expiry, so any validity of 28 days or more works.
 $OpenSSL = "openssl";
 $LocalCADays = 90;
 

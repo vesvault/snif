@@ -327,13 +327,25 @@ snif-certd daemon needs to be launched on the server start to process
 snif-arc needs to run once a day: enable snif-arc.timer (systemctl enable
     --now snif-arc.timer), or, without systemd, run make install-cron for
     /etc/cron.d/snif-arc -- one of the two, not both. If neither runs it,
-    a certificate is served past 75 days instead of renewed and expires at
-    90. It archives aging certificates: it moves any certificate older than
-    75 days out of crt/ into a dated folder under arc/. It does not reissue
-    anything - removing the stale certificate is what lets snif-certd issue a
-    fresh one the next time the connector requests it. A local-CA domain's
-    root bundle, crt/{SNIF_domain}.crt next to etc/{SNIF_domain}.pub-ca, is
-    not an issued certificate and stays in crt/.
+    no certificate is renewed: the connector asks for a new one 7 days
+    before its own expires, is given the same one back, and stops serving a
+    day before it expires. It archives aging certificates: it moves any
+    certificate with less than 14 days left out of crt/ into a dated folder
+    under arc/. It reads the expiry (notAfter) with openssl, only from files
+    at least 14 days old, so any validity of 28 days or more renews in time.
+    It does not reissue anything - removing the stale certificate is what
+    lets snif-certd issue a fresh one the next time the connector requests
+    it. A local-CA domain's root bundle, crt/{SNIF_domain}.crt next to
+    etc/{SNIF_domain}.pub-ca, is not an issued certificate and stays in
+    crt/. A file in crt/ whose expiry openssl cannot read is archived, and
+    the run reports it and fails.
+
+    It reports, one line each on stderr, every name whose newest
+    certificate is archived, has less than 5 days left, and has none newer
+    in crt/: "snif-arc: {name}: not renewed, its certificate expires
+    {YYYY-MM-DDThh:mm:ssZ}". A running connector asked for one at least two
+    days before, so either its device is off or gone, or it was issued
+    nothing (snif-certd's log says why).
 
     It also removes old state, for each of these that /etc/snif/snif.conf
     sets to a number of days. Unset, nothing is removed, as before 1.12:

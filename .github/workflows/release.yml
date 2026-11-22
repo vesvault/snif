@@ -1,0 +1,76 @@
+name: release
+
+# The release tarball, snif-<version>.tar.gz, built on each version tag from
+# the tag alone by `make dist-reproducible`, so that it is the same, byte for
+# byte, as one built from the tag anywhere else with GNU tar and gzip
+# (README.md, "Verify a release"). The job
+#
+#   - attests the tarball's provenance (actions/attest-build-provenance),
+#     signed through GitHub (Sigstore): that this workflow, run on this tag's
+#     commit, built that file:
+#       gh attestation verify snif-<version>.tar.gz --repo vesvault/snif
+#   - attaches it to the GitHub release, opening a draft release if none
+#     exists yet (docker.yml's sbom job adds the image SBOM to the same
+#     draft). A tarball already on the release is never replaced: a run that
+#     builds different bytes fails instead.
+#
+# Tarballs before 1.19 were made by hand on the maintainers' host; they cannot
+# be rebuilt from their tags byte for byte, and carry no attestation.
+
+on:
+  push:
+    tags: [ 'v*' ]
+
+jobs:
+  tarball:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write           # attach the tarball to the release
+      id-token: write           # sign the provenance (Sigstore, through GitHub)
+      attestations: write
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Which release
+        id: rel
+        run: |
+          v=${GITHUB_REF_NAME#v}
+          [[ $v =~ ^[0-9]+(\.[0-9]+)+$ ]] || { echo "::error::not a release version: '$v'"; exit 1; }
+          c=$(sed -n "s/^PACKAGE_VERSION='\(.*\)'\$/\1/p" configure)
+          [ "$c" = "$v" ] || { echo "::error::tag v$v, but configure is $c"; exit 1; }
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+
+      # From the tag alone: configure as committed, no autoreconf.
+      - name: Tarball
+        env:
+          V: ${{ steps.rel.outputs.version }}
+        run: |
+          ./configure > /dev/null
+          make dist-reproducible
+          echo "sha256 $(sha256sum "snif-$V.tar.gz" | cut -d' ' -f1)  snif-$V.tar.gz" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Attest its provenance
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: snif-${{ steps.rel.outputs.version }}.tar.gz
+
+      - name: Attach to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          V: ${{ steps.rel.outputs.version }}
+        run: |
+          f=snif-$V.tar.gz
+          if ! gh release view "v$V" > /dev/null 2>&1; then
+            gh release create "v$V" --draft --verify-tag --title "v$V" --notes "" "$f"
+            echo "::notice::opened a draft release v$V with $f: check its sha256 against the maintainers' build, add the notes, then publish it"
+          elif gh release view "v$V" --json assets --jq '.assets[].name' | grep -qxF "$f"; then
+            gh release download "v$V" --pattern "$f" --dir prev
+            cmp "$f" "prev/$f" || { echo "::error::$f on the release differs from this build; it is left as it is"; exit 1; }
+            echo "::notice::$f on the release is this build's, byte for byte"
+          else
+            gh release upload "v$V" "$f"
+          fi
