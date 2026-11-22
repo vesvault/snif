@@ -292,11 +292,22 @@ function snif_captcha_quota($ip, $cn) {
     $counters = ["day-$day" => $lim['day'], "dom-$day-" . snif_captcha_base($cn) => $lim['domain'],
 	"ip-$day-$k[ip]" => $lim['address']];
     if (isset($k['net'])) $counters["net-$day-$k[net]"] = $lim['net'];
-    foreach ($counters as $name => $max) if ($sum($name) >= $max) return false;
     $wd = snif_cluster_counter_dir($dir);
+    # One approval at a time on this node, from reading the limits to raising
+    # the counters: two at once could otherwise both take the last one.
+    # bin/snif-syncd and bin/snif-arc leave .lock alone (their names only).
+    $um = umask(0002);
+    $lk = @fopen("$wd/.lock", 'c');
+    umask($um);
+    if ($lk) flock($lk, LOCK_EX);
+    foreach ($counters as $name => $max) if ($sum($name) >= $max) {
+	if ($lk) fclose($lk);
+	return false;
+    }
     $um = umask(0002);
     foreach ($counters as $name => $max) @file_put_contents("$wd/$name", (int)@file_get_contents("$wd/$name") + 1);
     umask($um);
+    if ($lk) fclose($lk);
     if (snif_cluster_node()) {
 	foreach ($counters as $name => $max) snif_cluster_enqueue("auth/captcha/" . snif_cluster_node() . "/$name");
     }

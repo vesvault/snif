@@ -134,11 +134,72 @@ function snif_auth_ves_count($e) {
     return fclose($fd) && $ok;
 }
 
+# Whether $file, as VESapi answers for the item a token names, is one that
+# approves: one of its external ids, in a VES domain with an
+# etc/<domain>.ves-item, is a form that file lists for the file's own
+# creator. The file holds one form per line, "{email}" standing for the
+# creator's email, e.g. "{email}!snif-auth"; "#" starts a comment, and a
+# line without "{email}" approves nothing. Such an item is made to approve
+# SNIF names: VESapi lets only the owner of <email>'s key name an id after
+# it, and the authorization page shares it with no one else, so no one else
+# can read its token. Any other item a token reads, such as one shared with
+# its holder, approves nothing.
+function snif_auth_ves_item_ok($file) {
+    $e = strtolower((string)($file->creator->email ?? ''));
+    if ($e === '' || !isset($file->externals) || !is_array($file->externals)) return false;
+    foreach ($file->externals as $x) {
+	$dom = strtolower((string)($x->domain ?? ''));
+	$id = strtolower((string)($x->externalId ?? ''));
+	if ($id === '' || !preg_match('/^[a-z0-9][a-z0-9._-]*$/D', $dom)) continue;
+	$s = @file_get_contents($GLOBALS['VESetcDir'] . "/$dom.ves-item");
+	if ($s === false) continue;
+	foreach (explode("\n", $s) as $l) {
+	    $l = trim(preg_replace('/#.*/', '', $l));
+	    if ($l === '' || strpos($l, '{email}') === false) continue;
+	    if (strtolower(str_replace('{email}', $e, $l)) === $id) return true;
+	}
+    }
+    return false;
+}
+
+# The external ids of $file for the log when it approves nothing: each
+# domain, with the id's form, the creator's email shown as {email}. An id that
+# does not start with it shows as "(another form)", so that the log names no
+# address: it says which item an app approves with, not whose.
+function snif_auth_ves_item_forms($file) {
+    $e = strtolower((string)($file->creator->email ?? ''));
+    $f = [];
+    foreach ((isset($file->externals) && is_array($file->externals)) ? $file->externals : [] as $x) {
+	$dom = preg_replace('/[^\w.\-]/', '?', strtolower((string)($x->domain ?? '')));
+	$id = strtolower((string)($x->externalId ?? ''));
+	$f[] = "$dom:" . ($e !== '' && strpos($id, $e) === 0
+	    ? '{email}' . preg_replace('/[^\w.!\-]/', '?', substr($id, strlen($e))) : '(another form)');
+    }
+    return $f ? implode(' ', $f) : '(no external id)';
+}
+
 function snif_auth_ves() {
-    $hp = explode('.', $_SERVER['HTTP_X_VES_AUTHORIZATION']);
+    $h = isset($_SERVER['HTTP_X_VES_AUTHORIZATION']) ? $_SERVER['HTTP_X_VES_AUTHORIZATION'] : '';
+    $hp = explode('.', $h, 3);
     if ($hp[0] == 'vaultItem') {
-	$rs = ves_api_req('GET', 'vaultItems/' . $hp[1] . '?fields=file(creator(email))', ['Authorization: Bearer ' . $hp[2]]);
-	$e = isset($rs->file->creator->email) ? str_replace('/', '', $rs->file->creator->email) : '';
+	# VESauth's form only, vaultItem.<id>.<verify token>: the id a number,
+	# the token "~" and base64, with its expiry after a "." if it has one.
+	# Both go into the request to VESapi: a "/", "?" or "#" in the id would
+	# change what is asked, and any other token, a session's, would have
+	# VESapi read the item as that session's user, not by the item's token.
+	if (count($hp) != 3 || !preg_match('/^\d{1,20}$/D', $hp[1])
+	    || !preg_match('/^~[A-Za-z0-9_+\/=-]+(\.\d{1,20})?$/D', $hp[2])) {
+	    header('HTTP/1.0 403 Forbidden');
+	    exit;
+	}
+	$rs = ves_api_req('GET', 'vaultItems/' . $hp[1] . '?fields=deleted,file(creator(email),externals(domain,externalId))',
+	    ['Authorization: Bearer ' . $hp[2]]);
+	# A deleted item approves nothing, as libVES's own VESauth check has it.
+	$e = isset($rs->file->creator->email) && empty($rs->deleted) && snif_auth_ves_item_ok($rs->file)
+	    ? str_replace('/', '', $rs->file->creator->email) : '';
+	if ($e === '' && isset($rs->file))
+	    error_log('snif-auth-ves: not an approving item: ' . (empty($rs->deleted) ? '' : 'deleted, ')
+		. snif_auth_ves_item_forms($rs->file));
 	if ($e && snif_auth_ves_count($e)) {
 	    if (snif_cluster_node()) snif_cluster_enqueue("auth/ves/" . snif_cluster_node() . "/$e");
 	    return $e;

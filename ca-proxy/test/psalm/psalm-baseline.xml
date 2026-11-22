@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<files psalm-version="6.20.8@75d7ca00182ca690b273dcd8d172e8efa17d1f90">
+  <file src="../../public_html/snif-cert.php">
+    <TaintedFile>
+      <code><![CDATA["$BasePath/var/snif-certd.ctl"]]></code>
+      <code><![CDATA[$authfile]]></code>
+      <code><![CDATA[$crt_file]]></code>
+      <code><![CDATA[$csr_file]]></code>
+      <code><![CDATA[$err_file]]></code>
+    </TaintedFile>
+    <TaintedHeader>
+      <code><![CDATA["X-SNIF-AuthUrl: $AuthUrl$Domain"]]></code>
+      <code><![CDATA["X-SNIF-AuthUrl: $AuthUrl$Domain"]]></code>
+    </TaintedHeader>
+    <TaintedInclude>
+      <code><![CDATA["$BasePath/inc/snif-cluster.php"]]></code>
+    </TaintedInclude>
+  </file>
+  <file src="../../secure_html/snif-auth.php">
+    <TaintedFile>
+      <code><![CDATA["$AuthDir/$cn.auth"]]></code>
+      <code><![CDATA["$BaseDir/var/snif-certd.ctl"]]></code>
+      <code><![CDATA["$CfgDir/$cn.cfg"]]></code>
+      <code><![CDATA["$EtcDir/$Host.domains"]]></code>
+      <code><![CDATA[$pagefile]]></code>
+      <code><![CDATA[file_exists("$EtcDir/$d.keyalgo") ? "$EtcDir/$d.keyalgo" : "$EtcDir/keyalgo"]]></code>
+    </TaintedFile>
+    <TaintedHeader>
+      <code><![CDATA["Location: $loc"]]></code>
+    </TaintedHeader>
+    <TaintedInclude>
+      <code><![CDATA["$BaseDir/inc/snif-auth-captcha.php"]]></code>
+      <code><![CDATA["$BaseDir/inc/snif-auth-captcha.php"]]></code>
+      <code><![CDATA["$BaseDir/inc/snif-auth-captcha.php"]]></code>
+      <code><![CDATA["$BaseDir/inc/snif-auth-ves.php"]]></code>
+      <code><![CDATA["$BaseDir/inc/snif-cluster.php"]]></code>
+    </TaintedInclude>
+  </file>
+</files>

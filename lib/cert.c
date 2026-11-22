@@ -211,8 +211,14 @@ const char *snif_cert_hostname(snif_cert *cert) {
 		    unsigned char *buf = malloc(l);
 		    unsigned char *d = buf;
 		    if (d && i2d_PrivateKey(pkey, &d) > 0 && EVP_DigestUpdate(mdctx, buf, l) > 0 && EVP_DigestFinal_ex(mdctx, hash, &mdlen) > 0) {
-			if (cert->flags & SNIF_F_LEGACY) sprintf(h, "%08lx%04hx", *((unsigned long *)hash), *((unsigned short *)(hash + 4)));
-			else sprintf(h, "%02hhx%02hhx%02hhx%02hhx%02hhx%02hhx", hash[0], hash[1], hash[2], hash[3], hash[4], hash[5]);
+			/* The first 12 hex digits. The legacy form prints more
+			 * where unsigned long is 8 bytes (up to 20 digits), so
+			 * the digits are made apart from the name's buffer, which
+			 * a short name left too small for them. */
+			char hx[48];
+			if (cert->flags & SNIF_F_LEGACY) snprintf(hx, sizeof(hx), "%08lx%04hx", *((unsigned long *)hash), *((unsigned short *)(hash + 4)));
+			else snprintf(hx, sizeof(hx), "%02hhx%02hhx%02hhx%02hhx%02hhx%02hhx", hash[0], hash[1], hash[2], hash[3], hash[4], hash[5]);
+			memcpy(h, hx, 12);
 			h += 12;
 			ok = 1;
 		    }

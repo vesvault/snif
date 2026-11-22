@@ -12,7 +12,15 @@
 #     api.ves.host, and no server at all: no request is sent, ves_api_req()
 #     is NULL with status 0, nothing fatal;
 #   - snif_auth_ves(): approved, and counted, only through the first; the
-#     others answer 403 (it exits) and count nothing.
+#     others answer 403 (it exits) and count nothing;
+#   - the header's shape: only VESauth's, vaultItem.<id>.<verify token>, is
+#     sent on, a token's expiry with it; an id that is not a number, a token
+#     that is not a verify token ("~" and base64), or a part missing answers
+#     403 with no request sent; no header asks nothing;
+#   - the item: it approves only if one of its file's external ids is a form
+#     etc/<domain>.ves-item gives for the file's own creator ({email}); any
+#     other item a token can read, deleted, in a domain with no such file, or
+#     another account's name, answers 403 and counts nothing.
 #
 #   perl ca-proxy/test/ves-tls.t [path/to/ca-proxy]
 #
@@ -71,10 +79,12 @@ sh("openssl req -x509 $EC -keyout '$T/self.key' -out '$T/self.crt' -days 2 -subj
 
 # ---- the stand-in ------------------------------------------------------------
 
-# Answers each request with the creator's email, and writes down each
-# request it received. A handshake the client gives up is not a request, nor
-# is a connection it closes unused: PHP checks the certificate's name once
-# the handshake is done, and then closes without sending.
+# Answers each request with the item's file, its creator and externals, from
+# $T/items.json by the item's id (item 77, the creator's !snif-auth item,
+# for any other), and writes down each request it received. A handshake the
+# client gives up is not a request, nor is a connection it closes unused:
+# PHP checks the certificate's name once the handshake is done, and then
+# closes without sending.
 spew("$T/stand.php", <<'EOF');
 <?php
 $ctx = stream_context_create(['ssl' => ['local_cert' => $argv[2], 'local_pk' => $argv[3]]]);
@@ -87,11 +97,36 @@ for (;;) {
     while (($l = fgets($c)) !== false) { $req .= $l; if ($l === "\r\n") break; }
     if ($req === '') { fclose($c); continue; }
     file_put_contents($argv[4], "== request\n$req", FILE_APPEND);
+    $items = json_decode((string)@file_get_contents($argv[5]), true) ?: [];
+    $id = preg_match('#/vaultItems/(\d+)#', $req, $m) ? $m[1] : '';
     fwrite($c, "HTTP/1.0 200 OK\r\nContent-Type: application/json\r\n\r\n"
-	. '{"result":{"file":{"creator":{"email":"tls-test@example.test"}}}}');
+	. json_encode(['result' => $items[$id] ?? $items['77']]));
     fclose($c);
 }
 EOF
+# The items the stand-in knows, by id: the file VESapi would give for each.
+sub item {
+    my ($creator, $externals, %more) = @_;
+    my $x = join(',', map { sprintf('{"domain":"%s","externalId":"%s"}', @$_) } @$externals);
+    my $more = join('', map { sprintf(',"%s":%s', $_, $more{$_}) } sort keys %more);
+    return sprintf('{"file":{"creator":{"email":"%s"},"externals":[%s]}%s}', $creator, $x, $more);
+}
+my $Me = 'tls-test@example.test';
+my %Items = (
+    77 => item($Me, [['snif', "$Me!snif-auth"]]),
+    78 => item($Me, [['vesencrypt', "$Me!0"]]),
+    79 => item($Me, [['snif', 'TLS-TEST@Example.Test!snif-auth']]),
+    80 => item('victim@example.test', [['vesmail', 'message-80']]),
+    81 => item($Me, [['other', "$Me!snif-auth"]]),
+    82 => item($Me, [['snif', 'victim@example.test!snif-auth']]),
+    83 => item($Me, [['snif', "$Me!snif-auth"]], deleted => 'true'),
+    84 => item($Me, []),
+    85 => item($Me, [['../x', "$Me!snif-auth"]]),
+    86 => item($Me, [['fixed', 'any-item']]),
+    87 => item($Me, [['snif', "$Me!snif-auth-x"]]),
+    88 => item($Me, [['vesmail', 'message-88'], ['vesencrypt', "$Me!0"]]),
+);
+spew("$T/items.json", '{' . join(',', map { "\"$_\":$Items{$_}" } sort keys %Items) . '}');
 
 sub free_port {
     my $s = IO::Socket::INET->new(LocalAddr => '127.0.0.1', LocalPort => 0, Listen => 1) || die "port: $!";
@@ -110,7 +145,7 @@ sub stand {
     if (!$pid) {
 	open(STDOUT, '>', "$log.out");
 	open(STDERR, '>&', \*STDOUT);
-	exec('php', '-d', 'display_errors=stderr', "$T/stand.php", $port, "$T/$cert.crt", "$T/$cert.key", $log);
+	exec('php', '-d', 'display_errors=stderr', "$T/stand.php", $port, "$T/$cert.crt", "$T/$cert.key", $log, "$T/items.json");
 	exit 127;
     }
     push @Pids, $pid;
@@ -125,7 +160,9 @@ sub stand {
 # ---- the client --------------------------------------------------------------
 
 # 'req' calls ves_api_req(); 'auth' calls snif_auth_ves() with an
-# X-VES-Authorization header, and says "exited" if it exits (its 403 and 429).
+# X-VES-Authorization header (VESauth's shape, or the one given; "-" for
+# none), and says "exited" if it exits (its 403 and 429).
+my $Tok = '~dG9rLTc3LXRlc3QtdG9rZW4t';
 spew("$T/drv.php", <<'EOF');
 <?php
 $_SERVER['DOCUMENT_ROOT'] = $argv[1] . '/secure_html';
@@ -137,7 +174,7 @@ if ($argv[5] === 'req') {
     $rs = ves_api_req('GET', 'vaultItems/77?fields=file(creator(email))', ['Authorization: Bearer tok-77']);
     echo $rs ? 'ok ' . $rs->file->creator->email : 'null ' . $GLOBALS['api_req_status'], "\n";
 } else {
-    $_SERVER['HTTP_X_VES_AUTHORIZATION'] = 'vaultItem.77.tok-77';
+    if ($argv[6] !== '-') $_SERVER['HTTP_X_VES_AUTHORIZATION'] = $argv[6];
     $done = false;
     register_shutdown_function(function () use (&$done) { if (!$done) echo "exited\n"; });
     $e = snif_auth_ves();
@@ -148,10 +185,20 @@ EOF
 
 my $B = "$T/tree";
 make_path("$B/secure_html", "$B/auth/ves", "$B/etc");
+# Which items approve: the shipped etc/snif.ves-item, one for vesencrypt, a
+# file with no {email} in it, and one outside etc/ that no domain can name.
+spew("$B/etc/snif.ves-item", slurp("$Src/etc/snif.ves-item") // die "no $Src/etc/snif.ves-item\n");
+spew("$B/etc/vesencrypt.ves-item", "# VESencrypt's root key item\n{email}!0\n");
+spew("$B/etc/fixed.ves-item", "any-item\n");
+spew("$B/x.ves-item", "{email}!snif-auth\n");
 # The exit status, stdout and stderr of the client.
 sub client {
-    my ($addr, $mode) = @_;
-    my $out = `php -d display_errors=stderr -d log_errors=1 -d error_log='$T/php-err' '$T/drv.php' '$B' '$Src' '$addr' '$T/ca.crt' '$mode' 2> '$T/err'`;
+    my ($addr, $mode, $hdr) = @_;
+    $hdr //= "vaultItem.77.$Tok";
+    open(my $hf, '>', "$T/hdr") || die "hdr: $!";
+    print $hf $hdr;
+    close $hf;
+    my $out = `php -d display_errors=stderr -d log_errors=1 -d error_log='$T/php-err' '$T/drv.php' '$B' '$Src' '$addr' '$T/ca.crt' '$mode' "\$(cat '$T/hdr')" 2> '$T/err'`;
     my $rc = $? >> 8;
     my $err = slurp("$T/err") // '';
     s/\s+\z// for $out, $err;
@@ -172,7 +219,73 @@ check($got =~ /^Host: api\.ves\.host\r$/m && $got =~ /^Authorization: Bearer tok
 ($rc, $out, $err) = client("127.0.0.1:$port", 'auth');
 check($out eq 'approved tls-test@example.test', "snif_auth_ves() approves through it: '$out'");
 check((slurp($Counter) // '') =~ /^\d+\n\z/, 'and counts the approval');
+$got = slurp($log) // '';
+check($got =~ m{^GET /v1/vaultItems/77\?fields=deleted,file\(creator\(email\),externals\(domain,externalId\)\) HTTP/1\.0\r$}m
+    && $got =~ /^Authorization: Bearer \Q$Tok\E\r$/m, "asking for the item's file, its creator and external ids, with its verify token");
 unlink $Counter;
+
+# ---- the item ----------------------------------------------------------------
+
+# Approved only through an item made to approve: one of its external ids is a
+# form its domain's etc/<domain>.ves-item gives, for its own creator.
+for my $c ([78, "the creator's root key item, which vesencrypt.ves-item names"],
+	   [79, 'the creator\'s !snif-auth, its email in other letter case'],
+	   [88, 'an item with an approving external id among others']) {
+    my ($id, $what) = @$c;
+    ($rc, $out, $err) = client("127.0.0.1:$port", 'auth', "vaultItem.$id.$Tok");
+    check($out eq "approved $Me" && -e $Counter, "$what: approved and counted: '$out'");
+    unlink $Counter;
+}
+for my $c ([80, "another account's item, shared with the token's holder (a message)"],
+	   [81, "the creator's !snif-auth in a domain with no .ves-item"],
+	   [82, "another account's !snif-auth name, made by this creator"],
+	   [83, 'a deleted item'],
+	   [84, 'an item with no external id'],
+	   [85, 'a domain that would name a file outside etc/'],
+	   [86, 'a .ves-item line without {email}'],
+	   [87, 'a longer id than the form']) {
+    my ($id, $what) = @$c;
+    ($rc, $out, $err) = client("127.0.0.1:$port", 'auth', "vaultItem.$id.$Tok");
+    check($out eq 'exited' && !fatal($err), "$what: 403: '$out'");
+    check(!-e $Counter && !-e "$B/auth/ves/victim\@example.test", "$what: nothing counted");
+    unlink $Counter;
+}
+# Each refusal is logged with the item's domains and forms, and no address.
+my @Why = grep { /not an approving item/ } split /\n/, slurp("$T/php-err") // '';
+check(scalar(@Why) == 8, 'each refused item is logged: ' . scalar(@Why));
+check((grep { /: other:\{email\}!snif-auth$/ } @Why) && (grep { /: deleted, snif:\{email\}!snif-auth$/ } @Why)
+    && (grep { /: vesmail:\(another form\)$/ } @Why) && (grep { /: snif:\(another form\)$/ } @Why)
+    && (grep { /: \(no external id\)$/ } @Why), 'with its domain and form, the creator\'s email as {email}');
+check(!grep({ /@/ } @Why), 'and no address in it');
+
+# ---- the header's shape ------------------------------------------------------
+
+# A verify token with its expiry: sent on whole.
+unlink $log;
+($rc, $out, $err) = client("127.0.0.1:$port", 'auth', "vaultItem.77.$Tok.1893456000");
+check($out eq 'approved tls-test@example.test'
+    && (slurp($log) // '') =~ /^Authorization: Bearer \Q$Tok\E\.1893456000\r$/m,
+    "a verify token with its expiry: sent whole, approved: '$out'");
+unlink $Counter;
+
+for my $c (["vaultItem.77/../me.$Tok", 'an id with a "/"'],
+	   ["vaultItem.77?fields=x.$Tok", 'an id with a query'],
+	   ["vaultItem.77#.$Tok", 'an id with a "#"'],
+	   ['vaultItem.77.session-token-77', 'a token that is not a verify token'],
+	   ["vaultItem.77.$Tok x", 'a token with a space'],
+	   ['vaultItem.77', 'no token'],
+	   ["vaultItem..$Tok", 'no id']) {
+    my ($h, $what) = @$c;
+    unlink $log;
+    ($rc, $out, $err) = client("127.0.0.1:$port", 'auth', $h);
+    check($out eq 'exited' && !fatal($err), "$what: 403: '$out'");
+    check(!-e $log, "$what: nothing sent to VESapi");
+    check(!-e $Counter, "$what: nothing counted");
+    unlink $Counter;
+}
+unlink $log;
+($rc, $out, $err) = client("127.0.0.1:$port", 'auth', '-');
+check($out eq 'approved' && !fatal($err) && !-e $log, "no header: nothing asked, no approval (NULL): '$out'");
 
 # ---- refused -----------------------------------------------------------------
 

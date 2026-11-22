@@ -1,0 +1,89 @@
+Psalm: taint analysis of the CA proxy's PHP
+===========================================
+
+CodeQL reads snif's C. The CA proxy's PHP (public_html/, secure_html/,
+inc/), which takes requests from anyone, is read by Psalm's taint analysis:
+it follows request input to file paths, includes and response headers.
+GitHub runs it on every push to master and weekly (.github/workflows/
+psalm.yml); a finding outside the baseline is an alert in code scanning,
+and gets a verdict before a release, as CodeQL's alerts do: fixed, or read,
+found safe and added to the baseline below, with its reason.
+
+    ca-proxy/test/psalm/run.sh                 the analysis (exit 2: findings)
+    ca-proxy/test/psalm/run.sh --sarif FILE    the same, findings as SARIF
+    ca-proxy/test/psalm/run.sh --canary        checks that Psalm sees the inputs
+
+run.sh fetches Psalm's phar, 6.20.8, pinned by its sha256 (signed by
+"Daniil Gentili (Psalm signing key)", 54F5DF0E979A94C40DEDE5E599BF4D9A33D65E1E).
+It needs php (cli) and curl. A PHP without mbstring gets byte-wise
+stand-ins (mb-shim.php), without which Psalm crashes as it reports a
+finding.
+
+The plugin
+----------
+
+Psalm treats no $_SERVER value and not the request body as input, so on its
+own it finds nothing here. SnifTaintSources.php marks them: $_SERVER and
+anything read from it, file_get_contents('php://input'), and the arrays
+that hold preg_match() captures of input ($rm, $m, $rspp, since Psalm
+loses taint through a capture; a new one goes in its CAPTURES list).
+
+What it still does not see: input carried through $GLOBALS, the body once
+assigned to a variable, and symlink(), which is no sink for Psalm. Psalm
+does not read a preg_match() check either: a value checked against a
+pattern is still input to it, so a path built from a checked name is a
+finding, read once and kept in the baseline.
+
+canary/canary.php has one flaw per kind of input the plugin covers; run.sh
+--canary fails unless Psalm finds each. CI runs it first, so a plugin that
+stops working fails the job instead of passing it clean.
+
+The baseline
+------------
+
+psalm-baseline.xml holds the findings read and found safe, by file, kind
+and the code at the sink (not by line, so they stay matched as lines move).
+Each, as of the version that added it:
+
+public_html/snif-cert.php
+  TaintedInclude "$BasePath/inc/snif-cluster.php"
+  TaintedFile    "$BasePath/var/snif-certd.ctl"
+      $BasePath is DOCUMENT_ROOT/.., which the web server sets; the rest is
+      fixed. (The plugin marks all of $_SERVER, DOCUMENT_ROOT too: see
+      above.)
+  TaintedFile    $authfile, $csr_file, $crt_file, $err_file
+  TaintedHeader  "X-SNIF-AuthUrl: $AuthUrl$Domain" (twice)
+      $Domain is checked against the hostname pattern
+      /^\w([\.\-]?\w)*$/D before any use: no "/", no "..", no newline.
+      $AuthBase is $Domain less its first label. $AuthUrl is read from
+      etc/, the administrator's. header() refuses a line break anyway.
+
+secure_html/snif-auth.php
+  TaintedInclude "$BaseDir/inc/snif-auth-captcha.php" (3), "...ves.php",
+                 "$BaseDir/inc/snif-cluster.php"
+  TaintedFile    "$BaseDir/var/snif-certd.ctl"
+      $BaseDir is DOCUMENT_ROOT/.., as above.
+  TaintedFile    "$EtcDir/$Host.domains"
+      $Host is checked against the hostname pattern first (400 if not).
+  TaintedFile    "$CfgDir/$cn.cfg"
+      An allocated name: random hex and a zone from etc/{host}.domains, no
+      input in it. What is written in it, the fields, is bounded (README,
+      "Allocating a name").
+  TaintedFile    file_exists("$EtcDir/$d.keyalgo") ? ... : "$EtcDir/keyalgo"
+      $d is a zone from etc/{host}.domains, the administrator's.
+  TaintedFile    "$AuthDir/$cn.auth", $pagefile
+      $cn, from PATH_INFO, is checked against the hostname pattern before
+      either; $AuthBase is $cn less its first label.
+  TaintedHeader  "Location: $loc"
+      The authorization page's URL from etc/, then this request's own
+      https://{Host}{URI}, then &pow=1 or &sitekey=. Only the requester's
+      own redirect; the page at snif.host checks the authUrl's origin.
+      header() refuses a line break. It is not URL-encoded, since the page
+      reads the authUrl parameter as it stands.
+
+To add a finding after reading it, from the repository's root:
+
+    ca-proxy/test/psalm/run.sh --set-baseline=$PWD/ca-proxy/test/psalm/psalm-baseline.xml
+
+and write its reason here. --set-baseline rewrites the whole file from
+the findings of that run, so read the diff: it must add only the one read.

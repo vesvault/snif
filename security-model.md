@@ -47,6 +47,12 @@ disagree.
   conflicting key in CT is an unambiguous mis-issuance. Run in independent
   `watch` mode it trusts neither the relay nor the CA-proxy operator, so a
   device owner or a third party can verify the guarantee directly.
+- A base domain whose certificates come from a **private root** (a closed
+  system's own CA, such as `mesh.ves.world`, whose clients trust only that
+  root) has **no CT**: its certificates are not logged, so guarantee 3's
+  public detection does not hold for its names. There, a mis-issued
+  certificate can only be seen by the devices and apps that check the keys
+  they expect, and the guarantee rests on whoever holds that root's key.
 - The **client** validates the server certificate as it would for any HTTPS
   endpoint. SNIF provides a publicly trusted certificate precisely so existing
   clients need no special trust configuration.

@@ -194,6 +194,45 @@ int main(int argc, char **argv) {
     check(snif_cert_error(&cert) == SNIF_CE_API, "  with SNIF_CE_API");
     snif_cert_reset(&cert);
 
+    /* A device's hostname, for a wildcard name: "r", the first 12 hex
+     * digits of the MD5 of its key, then the name less its "*". The legacy
+     * form (SNIF_F_LEGACY) prints more than 12 digits where unsigned long is
+     * 8 bytes, and they were once printed into the name's buffer, which a
+     * name shorter than 6 characters left too small: AddressSanitizer stops
+     * here if they still are. Both stay what they were. */
+    char want[2][64], got[2][64];
+    FILE *kf = fopen(keypath, "r");
+    EVP_PKEY *pk = kf ? PEM_read_PrivateKey(kf, NULL, NULL, NULL) : NULL;
+    if (kf) fclose(kf);
+    unsigned char *der = NULL;
+    int derlen = pk ? i2d_PrivateKey(pk, &der) : 0;
+    unsigned char md[16];
+    unsigned int mdlen = sizeof(md);
+    int hashed = derlen > 0 && EVP_Digest(der, derlen, md, &mdlen, EVP_md5(), NULL) > 0;
+    char hx[48] = "";
+    snprintf(hx, sizeof(hx), "%02hhx%02hhx%02hhx%02hhx%02hhx%02hhx", md[0], md[1], md[2], md[3], md[4], md[5]);
+    snprintf(want[0], sizeof(want[0]), "r%.12s.l", hx);
+    snprintf(hx, sizeof(hx), "%08lx%04hx", *((unsigned long *)md), *((unsigned short *)(md + 4)));
+    snprintf(want[1], sizeof(want[1]), "r%.12s.l", hx);
+    OPENSSL_free(der);
+    EVP_PKEY_free(pk);
+    for (int lg = 0; lg < 2; lg++) {
+	memset(&cert, 0, sizeof(cert));
+	save("good.crt");
+	cert.certfile = crtpath;
+	cert.pkeyfile = keypath;
+	cert.rootstore = store;
+	snif_cert_init_ex(&cert, SNIF_F_KEYSPEC | (lg ? SNIF_F_LEGACY : 0));
+	snif_cert_pkey(&cert);		/* the key file is read only while there is no name */
+	cert.cn = strdup("*.l");
+	const char *hn = snif_cert_hostname(&cert);
+	snprintf(got[lg], sizeof(got[lg]), "%s", hn ? hn : "(none)");
+	snif_cert_reset(&cert);
+    }
+    check(hashed && !strcmp(got[0], want[0]), "the hostname for a short wildcard name, from the key's MD5");
+    check(hashed && !strcmp(got[1], want[1]), "  and the legacy one, the same as before, nothing written past its buffer");
+    printf("# %s %s\n", got[0], got[1]);
+
     X509_STORE_free(store);
     printf("%d passed, %d failed\n", pass, fail);
     return fail ? 1 : 0;

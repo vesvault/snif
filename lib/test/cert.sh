@@ -2,7 +2,9 @@
 #
 # libsnif certificate checks: a chain loaded from the certificate file is
 # verified against the roots, and snif_cert_reset() leaves no freed root
-# store behind, whether the struct is initialized again or used as it is.
+# store behind, whether the struct is initialized again or used as it is; a
+# wildcard name's hostname, portable and legacy, is what the key gives and
+# writes nothing past its buffer, however short the name.
 # Builds lib/test/cert-t.c with lib/cert.c, makes throwaway CAs, and serves
 # a chain for the download over HTTP.
 #

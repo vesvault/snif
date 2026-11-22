@@ -166,6 +166,7 @@ check($r->{status} == 202, "the solution approves the name (202): $r->{status}")
 check((auth_file($Names[0]) // '') eq '1', "the approval file records \"1\", not the address: " . (auth_file($Names[0]) // 'none'));
 my @ip = glob("$B/auth/captcha/ip-$Day-*");
 check((slurp("$B/auth/captcha/day-$Day") // '') eq '1' && @ip == 1, "the day's and the address's counters count it");
+check(-f "$B/auth/captcha/.lock", "under the counters' lock, kept beside them");
 my ($ipname) = map { m{/ip-\d+-(.*)\z} } @ip;
 check(($ipname // '') =~ /^[0-9a-f]{32}\z/ && $ipname ne md5_hex('127.0.0.1'),
     "the address's counter is not named by an unkeyed hash of it: " . ($ipname // 'none'));

@@ -1,0 +1,41 @@
+name: psalm
+
+# Psalm's taint analysis of the CA proxy's PHP, which CodeQL does not read:
+# request input followed to file paths, includes and headers
+# (ca-proxy/test/psalm/README). A finding outside the baseline of findings
+# already read is an alert in code scanning, triaged at each release as
+# CodeQL's alerts are. The canary runs first: if the plugin that gives
+# Psalm the CA proxy's inputs stops working, the job fails rather than
+# reporting a clean run.
+
+on:
+  push:
+    branches: [ master, main ]
+  pull_request:
+    branches: [ master, main ]
+  schedule:
+    - cron: '41 4 * * 1'
+
+jobs:
+  taint:
+    name: Taint analysis (PHP)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Canary
+        run: ca-proxy/test/psalm/run.sh --canary
+
+      - name: Analyse
+        # 2 is findings outside the baseline: they go to code scanning, as
+        # CodeQL's do. Anything else is a run that failed.
+        run: ca-proxy/test/psalm/run.sh --sarif psalm.sarif || [ $? -eq 2 ]
+
+      - name: Upload to code scanning
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: psalm.sarif
+          category: psalm

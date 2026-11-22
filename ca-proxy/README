@@ -290,6 +290,37 @@ etc/{email}.ves-limit and etc/ves-limit (optional) limit the certificates a
     cluster auth/ves/{node}/{email}; like the rest of etc/, the limit files
     are written on every node.
 
+X-VES-Authorization approves a name by VES. It is what VESauth sends from
+    the authorization page: vaultItem.{id}.{verify token}, the id a number
+    and the token "~" and base64, with its expiry after a "." if it has one.
+    Any other value after "vaultItem." is refused (403) without asking
+    VESapi. The approval is recorded under the account that created that
+    vault item, as VESapi answers, and only if the item was made to approve
+    (etc/{VES_domain}.ves-item, below); any other item is refused (403), as
+    is one that is deleted.
+
+etc/{VES_domain}.ves-item lists, for a VES domain, the vault items that
+    approve: one external id per line, {email} standing for the item's
+    creator's email, "#" starting a comment. An item approves if one of its
+    file's external ids, in a domain with such a file, is one of these for
+    its own creator (letter case aside). Without one, no item of that domain
+    approves; a line without {email} approves nothing. make install puts
+    etc/snif.ves-item in place if there is none: "{email}!snif-auth", the
+    item the authorization page at https://snif.host/auth approves with.
+    The point is that only the creator holds such an item: VESapi lets only
+    the owner of {email}'s key name an id after it, and the page shares the
+    item with no one else. A token for an item someone shared with you can
+    be read, and would otherwise approve in its creator's name. A relay
+    whose users approve from another app gives that app's domain a file of
+    its own, e.g. etc/vesencrypt.ves-item with "{email}!0".
+
+Allocating a name (any request to an initialization origin's root) reads
+    etc/{host}.domains, so the request's Host must be a hostname (400
+    otherwise). Its query and form fields are kept with the name, in
+    cfg/{name}.cfg, one k=v line each: at most 4096 bytes in all (413), and
+    none with a line break or a NUL in it, or that is not a plain value
+    (400).
+
 snif-certd daemon needs to be launched on the server start to process
     the certificate issuance for SNIF connectors.
 

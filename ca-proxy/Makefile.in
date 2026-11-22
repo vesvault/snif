@@ -738,6 +738,8 @@ install-data-hook:
 	chmod 02775 "$(DESTDIR)$(snifd_ca_basedir)"
 	[ -e "$(DESTDIR)$(snifd_ca_etcdir)/snif.snif.xyz.domains" ] || \
 	    $(INSTALL_DATA) $(srcdir)/etc/snif.snif.xyz.domains "$(DESTDIR)$(snifd_ca_etcdir)/"
+	[ -e "$(DESTDIR)$(snifd_ca_etcdir)/snif.ves-item" ] || \
+	    $(INSTALL_DATA) $(srcdir)/etc/snif.ves-item "$(DESTDIR)$(snifd_ca_etcdir)/"
 	if [ ! -e "$(DESTDIR)$(snifd_ca_etcdir)/snif.xyz.tsig" ]; then \
 	    $(INSTALL) -m 0600 $(srcdir)/etc/snif.xyz.tsig "$(DESTDIR)$(snifd_ca_etcdir)/" || exit 1; \
 	    if $(SNIF_OWNS); then chown snif:snif $(snifd_ca_etcdir)/snif.xyz.tsig || exit 1; fi; \

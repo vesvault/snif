@@ -1,0 +1,5 @@
+# The items that approve a SNIF name by VES in the "snif" domain
+# (inc/snif-auth-ves.php, README "X-VES-Authorization"): one external id per
+# line, {email} standing for the item's creator's email. The authorization
+# page at https://snif.host/auth approves with its user's {email}!snif-auth.
+{email}!snif-auth

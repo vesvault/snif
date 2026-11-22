@@ -26,6 +26,8 @@ $EtcDir = "$BaseDir/etc";
 $CfgDir = "$BaseDir/cfg";
 $CsrDir = "$BaseDir/csr";
 $AuthDir = "$BaseDir/auth";
+# The most a new name's cfg/ file may hold: its query and form fields.
+$CfgMaxSize = 4096;
 
 require_once "$BaseDir/inc/snif-cluster.php";
 
@@ -35,6 +37,28 @@ $Host = strtolower(preg_replace('/\:.*/', '', $_SERVER['HTTP_HOST']));
 $cn = strtolower(preg_replace('/^\/*/', '', $_SERVER['PATH_INFO']));
 
 if ($cn == '') {
+    # The Host names the origin, whose etc/<host>.domains lists the zones it
+    # allocates in: checked as a name is, before it reaches a path. A web
+    # server refuses a "/" in it; php -S, for one, does not.
+    if (!preg_match('/^\w([\.\-]?\w)*$/D', $Host)) {
+	header("HTTP/1.0 400 Bad Request");
+	exit;
+    }
+    # The query and form fields, kept with the name as one k=v line each.
+    # Allocating needs no approval, so they are bounded: each a string with
+    # no line break or NUL, and $CfgMaxSize bytes in all.
+    $cfg = '';
+    foreach ([$_GET, $_POST] as $fields) foreach ($fields AS $k => $v) {
+	if (!is_string($v) || preg_match('/[\r\n\0]/', "$k$v")) {
+	    header("HTTP/1.0 400 Bad Request");
+	    exit;
+	}
+	$cfg .= "$k=$v\n";
+    }
+    if (strlen($cfg) > $CfgMaxSize) {
+	header("HTTP/1.0 413 Request Entity Too Large");
+	exit;
+    }
     preg_match_all('/(\S+)/s', file_get_contents("$EtcDir/$Host.domains"), $dp);
     if (!$dp[1]) {
 	header("HTTP/1.0 502 Bad Gateway");
@@ -43,10 +67,7 @@ if ($cn == '') {
     $d = preg_replace('/^\./', '', $dp[1][array_rand($dp[1], 1)]);
     $hash = md5(openssl_random_pseudo_bytes(16));
     $cn = 'snif-' . substr($hash, 12, 12) . '-' . substr($hash, 24, 8) . '.' . $d;
-    $cfg = [];
-    foreach ($_GET AS $k => $v) array_push($cfg, "$k=$v\n");
-    foreach ($_POST AS $k => $v) array_push($cfg, "$k=$v\n");
-    if (file_put_contents("$CfgDir/$cn.cfg", join("", $cfg)) === false) {
+    if (file_put_contents("$CfgDir/$cn.cfg", $cfg) === false) {
 	header("HTTP/1.0 502 Bad Gateway");
 	exit;
     }

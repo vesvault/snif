@@ -5,6 +5,14 @@ name: docker
 # DOCKERHUB_USERNAME / DOCKERHUB_TOKEN secrets and list the second image
 # in the metadata step.
 #
+# Provenance: the `publish` job attests the image's build to its digest
+# (actions/attest-build-provenance), signed through GitHub (Sigstore), kept
+# with GitHub and pushed to GHCR beside the image. It says that this
+# workflow, run on this tag's commit, built that digest:
+#   gh attestation verify oci://ghcr.io/vesvault/snif:<version> --owner vesvault
+# Images built before 1.18 have none, and cannot be given one after the
+# fact: a later run would be attesting a build it did not do.
+#
 # SBOM: docker/image-sbom.js writes the published image's SBOM (CycloneDX
 # 1.6): every Alpine package in it, and snif itself, for all three
 # platforms, named by the image's index digest. After a release publishes,
@@ -40,7 +48,9 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      packages: write
+      packages: write           # push the image, and its provenance beside it
+      id-token: write           # sign the provenance (Sigstore, through GitHub)
+      attestations: write
     steps:
       - uses: actions/checkout@v4
 
@@ -62,13 +72,22 @@ jobs:
             type=match,pattern=v(.*),group=1
             type=raw,value=latest
 
-      - uses: docker/build-push-action@v6
+      - id: push
+        uses: docker/build-push-action@v6
         with:
           context: .
           platforms: linux/amd64,linux/arm64,linux/arm/v7
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+
+      # The digest just pushed: the image index, the same one the SBOM names.
+      - name: Attest the image's provenance
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-name: ghcr.io/${{ github.repository }}
+          subject-digest: ${{ steps.push.outputs.digest }}
+          push-to-registry: true
 
   sbom:
     name: SBOM of the published image

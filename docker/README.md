@@ -187,5 +187,11 @@ unprivileged user `snif` (uid 909).
   stream.
 - Certificate issuance and any relay misbehavior are publicly auditable
   through the CA Certificate Transparency logs.
+- From 1.18 the image carries a signed provenance attestation, that this
+  repository's workflow built it from the release tag's commit, and its SBOM
+  is attested too:
+  `gh attestation verify oci://ghcr.io/vesvault/snif:<version> --owner vesvault`
+  (add `--predicate-type https://cyclonedx.org/bom` for the SBOM). See
+  "Verify a release" in the [main README](../README.md).
 - See [security-model.md](../security-model.md) for the trust model and
   [SECURITY.md](../SECURITY.md) to report vulnerabilities.

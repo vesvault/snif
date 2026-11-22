@@ -1,5 +1,53 @@
 snif NEWS -- history of user-visible changes
 
+Version 1.18
+------------
+
+* ca-proxy: an approval by VES counts only through an item made to
+  approve. The CA proxy recorded the approval under the creator of
+  whatever vault item the token read, and a token can be read for any
+  item someone has shared with you: anyone holding another account's item
+  could approve in that account's name and use up its limit. Now one of
+  the item's external ids, in a VES domain with an
+  etc/{VES_domain}.ves-item, must be a form that file lists for the
+  item's own creator ({email}). make install puts etc/snif.ves-item in
+  place, "{email}!snif-auth", the item the authorization page at
+  snif.host approves with. A relay whose users approve from another app
+  must give that app's domain a file of its own before upgrading, or its
+  approvals stop (README, "etc/{VES_domain}.ves-item"). A deleted item
+  approves nothing, and a refusal is logged with the item's domain and
+  form, never an address. test/ves-tls.t covers it.
+
+* ca-proxy: X-VES-Authorization must be VESauth's
+  vaultItem.<id>.<verify token>, or 403 before VESapi is asked. Its
+  parts went into the request to VESapi unchecked, where a "/", "?" or
+  "#" in the id changed what was asked, and a session token in place of
+  the verify token read the item as that session's user. A token's
+  expiry is no longer cut off at its ".".
+
+* ca-proxy: what a request carries is checked before it reaches a path
+  or a line to snif-syncd, where the front web server was relied on:
+  allocating a name checks its Host header (400); the query and form
+  fields kept in the name's cfg file must have no line break or NUL and
+  come to at most 4096 bytes (400, 413); snif-cert.php's name check ends
+  at the name, as snif-auth.php's does, so a name cannot end in a
+  newline. Two proof-of-work approvals at once can no longer both take
+  the last of a day's limit. test/input-checks.t covers them.
+
+* ca-proxy: the example PHP-FPM pool (etc/php-fpm/snif.conf) holds the
+  PHP to its tree and etc/ (open_basedir), runs no command and opens no
+  URL as a file; the CA proxy needs none of them.
+
+* ca-proxy: Psalm's taint analysis of the PHP runs on every push, as
+  CodeQL does for the C (test/psalm/README).
+
+* libsnif: a legacy hostname (SNIF_F_LEGACY, snifd without -P) for a
+  wildcard name shorter than 6 characters wrote past its buffer on a
+  64-bit platform. The hostname is the same as before.
+
+* docker: the image carries a signed provenance attestation, checked with
+  gh attestation verify (README, "Verify a release").
+
 Version 1.17
 ------------
 

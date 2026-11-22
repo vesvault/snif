@@ -43,7 +43,10 @@ if (preg_match('#/snif-cert/([^/?]+)\.(?:csr|crt)(?:[?\#].*)?$#', $_SERVER['REQU
 } else {
     $Domain = strtolower($_SERVER['HTTP_HOST']);
 }
-if (!preg_match('/^\w([\.\-]?\w)*$/', $Domain)) {
+# "D": a "$" that ends the name, not one before a trailing newline. The name
+# goes into the requests to snif-syncd and snif-certd, one per line, as in
+# secure_html/snif-auth.php.
+if (!preg_match('/^\w([\.\-]?\w)*$/D', $Domain)) {
     header('HTTP/1.0 400 Bad Request');
     exit;
 }

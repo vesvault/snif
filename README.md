@@ -261,6 +261,23 @@ CA proxy — is Apache-2.0.
   makes the `snif` user, the CA proxy tree, its directories and pipes, and
   the units; installing again keeps the configuration and state.
 
+### Moving a device to another relay
+
+A device's name is in its relay's domain, and only that relay serves it, so a
+device that moves gets a new name:
+
+1. Give the connector a **new key directory** (or a new Docker volume): with no
+   key, it generates a new one and allocates a name from its init URL.
+2. Point **`SNIF_CONN_INITURL`** (and `SNIF_CONN_APIURL`, if that relay needs
+   it) at the new relay, and approve the new name there.
+3. Give the device's **clients the new name**: SNIF leaves telling them to the
+   application.
+
+Changing the URLs without a new key directory moves nothing. The init URL is
+used only to allocate a name, when the connector has no key; with the old key
+and certificate it keeps its old name, which renews with the relay that issued
+it, or, with `SNIF_CONN_APIURL` pointed at the new relay, stops renewing there.
+
 
 ## Contents
 
@@ -281,8 +298,33 @@ snifdog/    CA Transparency watchdog — standalone sub-package
 **Private relay (`snifd` + `snif-relay` + `ca-proxy`)**
 - HTTP + HTTPS server with `.htaccess` (tested on Apache)
 - `mod_rewrite` and `mod_headers` (adjust the `.htaccess` files for other servers)
-- PHP + `mod_php`
+- PHP, in a PHP-FPM pool of its own ([`ca-proxy/etc/php-fpm/snif.conf`](ca-proxy/etc/php-fpm/snif.conf)), not `mod_php`
 - Perl + CPAN
+
+
+## Verify a release
+
+- **The source** is the release's tag in this repository; the tarball on the
+  GitHub release is made from it with `make dist`, and the Homebrew formula
+  (`vesvault/homebrew-ves`) pins the tarball by its sha256.
+- **The container image**, from 1.18 on, carries a signed provenance
+  attestation: GitHub's record that this repository's `docker` workflow,
+  run on the tag's commit, built that digest. With the GitHub CLI:
+
+  ```sh
+  gh attestation verify oci://ghcr.io/vesvault/snif:<version> --owner vesvault
+  ```
+
+  Its SBOM (CycloneDX, every package in it for all three platforms) is on the
+  GitHub release and attested the same way:
+
+  ```sh
+  gh attestation verify oci://ghcr.io/vesvault/snif:<version> --owner vesvault \
+    --predicate-type https://cyclonedx.org/bom
+  ```
+
+  A tag such as `latest` moves; pin a deployment to the digest you verified
+  (`ghcr.io/vesvault/snif@sha256:…`).
 
 
 ## Specification & security
